@@ -1,7 +1,5 @@
 FROM python:3.12-slim-bookworm
 
-ARG GROCER_REVISION=development
-ENV GROCER_REVISION=$GROCER_REVISION
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -22,6 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY grocer ./grocer
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
+
+ARG GROCER_REVISION=development
+ENV GROCER_REVISION=$GROCER_REVISION
 
 EXPOSE 8790 6080
 VOLUME /data
