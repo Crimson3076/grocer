@@ -14,7 +14,7 @@ def fill(force: bool = False) -> dict:
     if not row:
         raise RuntimeError("Build a grocery list first")
     review_id, week = row["id"], row["week_start"]
-    run = j.db.cart_run(week)
+    run = j.db.cart_run(week, review_id)
     if (run and run["state"] in {"carted", "checked_out"}) or row["status"] in {"carted", "checked_out"}:
         return {"skipped": "already carted"}
     if row["status"] == "pending" and not (force or j.CONFIG.auto_cart_if_unreviewed):
@@ -22,6 +22,9 @@ def fill(force: bool = False) -> dict:
                     url=f"{j.CONFIG.public_url}/review")
         return {"skipped": "not approved"}
     data = json.loads(row["data"])
+    if not run:
+        from .trips import require_current
+        require_current(data)
     j.configure_browser()
     if data.get("walmart") and data["walmart"] != j.walmart_settings():
         raise RuntimeError("The store has changed. Rebuild the list before filling the cart.")
@@ -80,6 +83,8 @@ def fill(force: bool = False) -> dict:
                         j.db.save_pick(item["key"], chosen, approved=False)
                 plan["lines"].append(line)
             current = j.browser.cart_contents()
+            plan['cart_before'] = dict(current) if current is not None else None
+            plan['added_quantities'] = {}
             if current is None:
                 # First fill: nothing has been added by us yet, so there is nothing to double.
                 # Go ahead, but remember the cart couldn't be read so a retry won't add again blindly.
@@ -104,6 +109,8 @@ def fill(force: bool = False) -> dict:
         for iid, _ in remaining:
             if not j.locally_available(live_item(iid)):
                 raise RuntimeError("A product is no longer available at your store. Check the Walmart cart before retrying.")
+        if not run:
+            require_current(data)
         j.progress(step="Adding missing quantities to your Walmart cart")
         j.browser.add_to_cart(remaining)
         after = j.browser.cart_contents()
@@ -112,11 +119,20 @@ def fill(force: bool = False) -> dict:
             missing = []      # sent, but we can't see the cart to confirm; the message says to check it
         else:
             missing = [iid for iid, _ in deficits(plan["targets"], after)]
+        if after is not None and plan.get('cart_before') is not None:
+            added = plan.setdefault('added_quantities', {})
+            for iid, qty in remaining:
+                confirmed = min(qty, max(after.get(iid, 0) - current.get(iid, 0), 0))
+                added[iid] = added.get(iid, 0) + confirmed
         state = "partial" if missing else "carted"
         plan.pop("error", None)
         plan["missing"] = missing
         plan["added"] = sum(1 for line in plan["lines"] if str(line["pick"]["item_id"]) not in missing)
-        plan["unresolved"] = plan["carried"] + plan["unanswered"] + plan["no_pick"]
+        plan['unread_lines'] = data.get('unparsed', [])
+        plan['left_for_later'] = [i['key'] for i in data['items'] if i['status']=='skip']
+        plan["unresolved"] = list(dict.fromkeys(plan["carried"] + plan["unanswered"] + plan["no_pick"] + plan['left_for_later'] + plan['unread_lines']))
+        from .trips import coverage
+        plan['coverage'] = coverage(data, plan)
         plan["estimated_total"] = round(sum((line["pick"].get("price") or 0) * line["qty"] for line in plan["lines"]), 2)
         plan["unknown_prices"] = [line["key"] for line in plan["lines"] if line["pick"].get("price") is None]
         j.db.save_cart_run(week, review_id, state, plan)
@@ -135,7 +151,7 @@ def fill(force: bool = False) -> dict:
                              {"action": "GROCER_DONE", "title": "Checked out"}])
         return {k: plan[k] for k in ("added", "swaps", "carried", "unanswered", "missing", "no_pick")}
     except Exception as e:
-        run = j.db.cart_run(week)
+        run = j.db.cart_run(week, review_id)
         if run:
             plan = run["data"]
             plan["error"] = j._friendly(e)
@@ -150,40 +166,64 @@ def fill(force: bool = False) -> dict:
         return {"failed": why}
 
 
-def confirm_checkout() -> None:
-    from . import jobs as j
+def confirm_checkout(quantities: dict[str, int] | None = None, manual_keys: list[str] | None = None) -> None:
+    from . import jobs as j, pantry
+    from .trips import coverage
 
-    # The entire inventory update and the completion marker share one transaction.
     with j.db.tx() as c:
-        row = c.execute("SELECT * FROM reviews ORDER BY id DESC LIMIT 1").fetchone()
-        if row:
-            run = c.execute("SELECT * FROM cart_runs WHERE week_start = ?", (row["week_start"],)).fetchone()
-            if run and run["state"] not in {"carted", "checked_out"}:
-                raise RuntimeError("The cart has unverified quantities. Retry its check before confirming checkout.")
-            if run and run["state"] == "carted":
-                data = json.loads(run["data"])
-                credits = {line["key"]: (line["stock_credit"], line["used"]) for line in data["lines"]}
-                for item in data.get("covered", []):
-                    credits.setdefault(item["key"], (0, item["used"]))
-                for key, (bought, used) in credits.items():
-                    stock = c.execute("SELECT packages FROM stock WHERE key = ?", (key,)).fetchone()
-                    packages = max((stock["packages"] if stock else 0) + bought - used, 0)
-                    ts = now_iso()
-                    c.execute("""INSERT INTO stock(key, packages, confidence, updated, last_bought, restock)
-                                 VALUES (?,?,?,?,?,0) ON CONFLICT(key) DO UPDATE SET packages=excluded.packages,
-                                 confidence=excluded.confidence, updated=excluded.updated,
-                                 last_bought=COALESCE(excluded.last_bought, stock.last_bought),
-                                 restock=CASE WHEN ? > 0 THEN 0 ELSE stock.restock END""",
-                              (key, packages, 0.7, ts, ts if bought else None, bought))
-                c.execute("UPDATE cart_runs SET state='checked_out', updated=? WHERE week_start=?", (now_iso(), row["week_start"]))
-                # these dinners are bought; the Dinners page shows them as ordered from now on
-                from . import dinners
-                review = json.loads(row["data"])
-                dinners.mark_ordered(review.get("meal_keys", []), review.get("meals", []), row["id"], c)
-                c.execute("UPDATE reviews SET status='checked_out' WHERE id=?", (row["id"],))
-            elif not run and row["status"] == "carted":
-                # Old releases already credited stock at cart time. Do not credit it again.
-                c.execute("UPDATE reviews SET status='checked_out' WHERE id=?", (row["id"],))
+        row = j.db.latest_review()
+        if not row:
+            raise RuntimeError('No shopping trip to confirm')
+        run = j.db.cart_run(row['week_start'], row['id'])
+        if run and run['state'] == 'checked_out':
+            return
+        if not run or (run['state'] != 'carted' and quantities is None):
+            raise RuntimeError('Check the cart quantities before confirming checkout.')
+        plan = run['data']
+        review = json.loads(row['data'])
+        original = {line['key']: line for line in plan['lines']}
+        manual_keys = set(manual_keys or [])
+        if manual_keys - set(plan.get('unresolved', [])):
+            raise ValueError('Only confirm manual purchases for unresolved ingredients')
+        plan['manual_purchases'] = sorted(manual_keys)
+        if quantities is not None:
+            if run['state'] != 'carted' and set(quantities) != set(original):
+                raise ValueError('Confirm a purchased quantity for every product in this interrupted trip')
+            if set(quantities) - set(original):
+                raise ValueError('Choose quantities only for products in this trip')
+            if any(isinstance(q, bool) or not isinstance(q, int) or q < 0 or q > 999 for q in quantities.values()):
+                raise ValueError('Purchased quantities must be whole numbers from 0 to 999')
+        bought_lines = []
+        for line in plan['lines']:
+            qty = quantities.get(line['key'], line['qty']) if quantities is not None else line['qty']
+            if qty < line['qty']:
+                plan['carried'] = list(set(plan['carried'] + [line['key']]))
+            if qty:
+                purchased = dict(line, qty=qty)
+                pantry.credit(c, purchased, row['trip_id'])
+                bought_lines.append(purchased)
+        plan['purchased_lines'] = bought_lines
+        actual = {line['key']: line['qty'] for line in bought_lines}
+        plan['missing'] = [iid for iid in plan.get('missing', []) if any(
+            str(line['pick']['item_id']) == str(iid) and actual.get(line['key'], 0) < line['qty']
+            for line in plan['lines'])]
+        plan['coverage'] = coverage(review, plan)
+        pantry.reserve(c, review, row['id'])
+        complete = [m['key'] for m in plan['coverage'] if m['complete']]
+        from . import dinners
+        dinners.mark_ordered(complete, review.get('meals', []), row['id'], c)
+        for key in manual_keys:
+            j.db.set_restock(key, False)
+        for key in {k for m in plan['coverage'] for k in m['missing']}:
+            # Carry actual grocery keys forward; human-readable warnings are not foods.
+            if key in {i['key'] for i in review['items']}:
+                if not j.db.stock(key):
+                    j.db.set_stock(key, 0, 0.5)
+                j.db.set_restock(key, True)
+        c.execute("UPDATE cart_runs SET state='checked_out', data=?, updated=? WHERE week_start=?",
+                  (json.dumps(plan), now_iso(), run['week_start']))
+        review['cart_result'] = plan
+        j.db.update_review(row['id'], data=review, status='checked_out')
     j.ha.clear(j.STATUS_TAG)
     j.changed()
-    j.db.log("checked_out")
+    j.db.log('checked_out', trip=row['trip_id'])

@@ -93,11 +93,32 @@ def overview() -> dict:
             "rotation_tag": j.CONFIG.dinner_tag}
 
 
+def _edit_allowed():
+    j = _j()
+    if j.busy() and j.STATE['job']['kind'] == 'cart':
+        raise RuntimeError('Wait for the cart check to finish before changing dinners.')
+    row = j.db.latest_review()
+    if row and row['status'] != 'checked_out' and j.db.cart_run(row['week_start'],row['id']):
+        raise RuntimeError('Finish or reopen the active trip before changing its dinners.')
+
+
+def _invalidate():
+    import json
+    j = _j(); row = j.db.latest_review()
+    if row and row['status'] in {'pending','approved'}:
+        data=json.loads(row['data']);data['stale']=True
+        j.db.update_review(row['id'],data=data,status='pending')
+    j.changed()
+
+
 def choose(keys: list[str], on: bool) -> None:
-    choice = _choices()
-    for k in keys:
-        choice[k] = bool(on)
-    _j().db.save_settings("meal_choice", choice)
+    with _j().REVIEW_LOCK:
+        _edit_allowed()
+        choice = _choices()
+        for k in keys:
+            choice[k] = bool(on)
+        _j().db.save_settings('meal_choice', choice)
+        _invalidate()
 
 
 def mark_ordered(keys: list[str], meals: list[dict], review_id: int | None, c=None) -> None:
@@ -184,11 +205,14 @@ def set_dinner(day: str, recipe_id: str, key: str | None = None) -> dict:
         if key in done:
             raise ValueError("That dinner was already ordered")
         return _replace(e, recipe_id, key)
+    _edit_allowed()
     j.mealie.add_mealplan(date.fromisoformat(day), "dinner", recipe_id)
+    _invalidate()
     return {"date": day, "recipe_id": recipe_id}
 
 
 def _replace(e, recipe_id: str, old_key: str) -> dict:
+    _edit_allowed()
     j = _j()
     was = _choices().get(old_key)
     j.mealie.add_mealplan(date.fromisoformat(e.date), e.entry_type, recipe_id)
@@ -198,6 +222,7 @@ def _replace(e, recipe_id: str, old_key: str) -> dict:
                     if x.recipe_id == recipe_id and x.entry_type == e.entry_type), None)
         if new:
             choose([key_of(new)], was)
+    _invalidate()
     j.db.log("dinner_swapped", date=e.date, old=e.recipe_id, new=recipe_id)
     return {"date": e.date, "recipe_id": recipe_id}
 

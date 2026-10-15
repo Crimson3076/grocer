@@ -512,7 +512,8 @@ def test_jobs_report_progress_and_refuse_overlap(monkeypatch):
     assert st["job"]["step"] == "Finding salsa at Walmart" and st["job"]["total"] == 10
     assert c.get("/api/search", params={"q": "salsa"}).status_code == 409          # busy: refused, not hung
     assert c.post("/api/qty", json={"key": "butter", "qty": 2}).status_code == 200  # quick edits still work
-    assert jobs.start("build", "x", lambda: None).get("already")                    # one job at a time
+    with pytest.raises(RuntimeError, match='not queued'):
+        jobs.start('build', 'x', lambda: None)
     gate.set()
     jobs.wait_for(job)
     st = c.get("/api/status").json()
@@ -540,7 +541,8 @@ def test_alerts_clear_on_every_phone(monkeypatch):
     ha.cleared.clear(); jobs.browser.on_login_ok()
     assert ha.cleared == []                                    # nothing open: nothing to clear
     # "Checked out" on any phone clears the cart notification everywhere
-    assert c.post("/api/checked-out").status_code == 200 and ha.cleared == [jobs.STATUS_TAG]
+    assert c.post('/api/checked-out').status_code == 409
+    assert ha.cleared == []  # no purchase may be recorded without an active cart
 
 
 def test_home_assistant_buttons_and_voice():
@@ -683,7 +685,11 @@ def test_duplicate_ingredients_merge(monkeypatch):
     jobs.db.save_pick("dried parsley", {"item_id": "gv", "title": "Great Value Parsley Flakes, 0.4 oz"}, approved=False)
     c = TestClient(appmod.app)
     last = c.post("/api/dedupe?wait=true").json()
-    assert last["state"] == "done" and "Merged" in last["message"]
+    assert last['state'] == 'done' and 'suggested' in last['message']
+    assert jobs.db.food('cracked pepper') is not None  # scanning never mutates ingredients
+    proposal = c.get('/api/cleanup').json()['proposal']
+    monkeypatch.setattr(jobs, 'rebuild_soon', lambda: {})
+    assert c.post('/api/cleanup/apply',json={'id':proposal['id'],'groups':list(range(len(proposal['groups'])))}).status_code == 200
     keys = {r["key"] for r in jobs.db.all("SELECT key FROM foods WHERE category = 'spice'")}
     assert {"cracked black pepper", "cracked pepper"}.isdisjoint(keys) and "black pepper" in keys
     assert "crushed red pepper" in keys                                  # a different product stays
@@ -869,9 +875,15 @@ def test_dinners_pick_swap_and_order(monkeypatch, tmp_path):
     picks = [dinners.pick({"r1", "r2", "r3", "r4", "r5", "r8"}, random.Random(i))["id"] for i in range(300)]
     assert picks.count("r6") > picks.count("r7")   # r6 last eaten Sep 20, r7 Oct 1
 
+    # Supply recipe yields and pantry answers so this trip fully covers the dinners.
+    for r in m.POOL:
+        jobs.db.set_recipe_yield(r['id'],4)
     # ordering: build with the ticked dinners, checkout marks them ordered
     review = c.post("/api/review/build?wait=true").json()["review"]
     assert set(review["meal_keys"]) == set(dinners.selected_keys())
+    for item in review['items']:
+        if item['status']=='check':
+            c.post('/api/stock',json={'food':item['key'],'level':'high'})
     c.post("/api/cart?force=true&wait=true")
     assert c.post("/api/checked-out").status_code == 200
     ov = c.get("/api/dinners").json()

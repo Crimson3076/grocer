@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,27 @@ CREATE TABLE IF NOT EXISTS cart_runs (
     data TEXT NOT NULL,
     updated TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trips (
+    id TEXT PRIMARY KEY, created TEXT NOT NULL, status TEXT NOT NULL, review_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS meal_progress (
+    key TEXT PRIMARY KEY, name TEXT, date TEXT, state TEXT NOT NULL, review_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS reservations (
+    meal_key TEXT NOT NULL, food_key TEXT NOT NULL, quantity REAL NOT NULL,
+    dimension TEXT NOT NULL, PRIMARY KEY(meal_key, food_key)
+);
+CREATE TABLE IF NOT EXISTS inventory_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, kind TEXT NOT NULL,
+    food_key TEXT NOT NULL, quantity REAL NOT NULL, dimension TEXT, reference TEXT
+);
+CREATE TABLE IF NOT EXISTS job_records (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL, state TEXT NOT NULL,
+    payload TEXT NOT NULL, updated TEXT NOT NULL, error TEXT
+);
+CREATE TABLE IF NOT EXISTS merge_proposals (
+    id TEXT PRIMARY KEY, data TEXT NOT NULL, state TEXT NOT NULL, snapshot TEXT, created TEXT NOT NULL
+);
 """
 
 
@@ -116,6 +138,15 @@ class DB:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        old_review_cols = {r[1] for r in self._conn.execute('PRAGMA table_info(reviews)')}
+        if old_review_cols and 'trip_id' not in old_review_cols:
+            backup = path.with_name(path.stem + '.before-0.2.0.db')
+            if not backup.exists():
+                destination = sqlite3.connect(backup)
+                try:
+                    self._conn.backup(destination)
+                finally:
+                    destination.close()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(stock)")}
@@ -135,16 +166,50 @@ class DB:
                 self._conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {kind}")
         self._conn.commit()
         self._lock = threading.RLock()
+        self._tx_depth = 0
+        for table, columns in {
+            'reviews': {'trip_id': 'TEXT'},
+            'stock': {'quantity': 'REAL', 'dimension': 'TEXT', 'basis_item_id': 'TEXT'},
+        }.items():
+            existing = {r[1] for r in self._conn.execute(f'PRAGMA table_info({table})')}
+            for col, kind in columns.items():
+                if col not in existing:
+                    self._conn.execute(f'ALTER TABLE {table} ADD COLUMN {col} {kind}')
+        self._conn.execute("UPDATE reviews SET trip_id='legacy:' || id WHERE trip_id IS NULL")
+        self._conn.execute("""INSERT OR IGNORE INTO trips(id, created, status, review_id)
+                              SELECT trip_id, created, status, id FROM reviews""")
+        # Preserve the old package estimate using the package size it was measured against.
+        self._conn.execute("""UPDATE stock SET quantity=packages * COALESCE(
+            (SELECT size_qty FROM picks WHERE picks.key=stock.key), 1),
+            dimension=COALESCE((SELECT size_dim FROM picks WHERE picks.key=stock.key),
+                CASE WHEN EXISTS (SELECT 1 FROM picks WHERE picks.key=stock.key) THEN 'count' ELSE 'package' END),
+            basis_item_id=(SELECT item_id FROM picks WHERE picks.key=stock.key)
+            WHERE quantity IS NULL""")
+        self._conn.execute("UPDATE job_records SET state='interrupted', error='The container restarted. Review and resume this task.', updated=? WHERE state IN ('running','accepted','dispatching')", (now_iso(),))
+        self._conn.commit()
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            nested = self._tx_depth > 0
+            savepoint = 'sp_' + uuid.uuid4().hex
+            self._conn.execute(f'SAVEPOINT {savepoint}' if nested else 'BEGIN')
+            self._tx_depth += 1
             try:
                 yield self._conn
-                self._conn.commit()
+                if nested:
+                    self._conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                else:
+                    self._conn.commit()
             except Exception:
-                self._conn.rollback()
+                if nested:
+                    self._conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                    self._conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                else:
+                    self._conn.rollback()
                 raise
+            finally:
+                self._tx_depth -= 1
 
     def one(self, sql: str, *args: Any) -> sqlite3.Row | None:
         with self._lock:
@@ -193,20 +258,24 @@ class DB:
         return self.one("SELECT * FROM picks WHERE key = ?", key)
 
     def save_pick(self, key: str, p: dict, approved: bool, source: str = "search") -> None:
-        self.run(
-            """INSERT INTO picks(key, item_id, title, url, price, size_qty, size_dim, sales_unit, approved, updated, source,
-                                 image_url)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(key) DO UPDATE SET item_id=excluded.item_id, title=excluded.title, url=excluded.url,
-               price=excluded.price, size_qty=excluded.size_qty, size_dim=excluded.size_dim,
-               sales_unit=excluded.sales_unit, approved=excluded.approved, updated=excluded.updated,
-               source=excluded.source, image_url=excluded.image_url""",
-            key, str(p["item_id"]), p.get("title"), p.get("url"), p.get("price"),
-            p.get("size_qty"), p.get("size_dim"), p.get("sales_unit"), int(approved), now_iso(), source,
-            p.get("image") or p.get("image_url") or self.image_for(str(p["item_id"])),
-        )
-        self.run("UPDATE picks SET local_available=?, store_id=?, fulfillment=?, local_reason=? WHERE key=?",
-                 int(bool(p.get("local_available"))), p.get("store_id"), p.get("fulfillment"), p.get("local_reason"), key)
+        with self.tx():
+            self.run(
+                """INSERT INTO picks(key, item_id, title, url, price, size_qty, size_dim, sales_unit, approved, updated, source,
+                                     image_url)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET item_id=excluded.item_id, title=excluded.title, url=excluded.url,
+                   price=excluded.price, size_qty=excluded.size_qty, size_dim=excluded.size_dim,
+                   sales_unit=excluded.sales_unit, approved=excluded.approved, updated=excluded.updated,
+                   source=excluded.source, image_url=excluded.image_url""",
+                key, str(p["item_id"]), p.get("title"), p.get("url"), p.get("price"),
+                p.get("size_qty"), p.get("size_dim"), p.get("sales_unit"), int(approved), now_iso(), source,
+                p.get("image") or p.get("image_url") or self.image_for(str(p["item_id"])),
+            )
+            self.run("UPDATE picks SET local_available=?, store_id=?, fulfillment=?, local_reason=? WHERE key=?",
+                     int(bool(p.get("local_available"))), p.get("store_id"), p.get("fulfillment"), p.get("local_reason"), key)
+            stock = self.stock(key)
+            if stock and stock['packages'] is not None:
+                self.run('UPDATE stock SET packages=? WHERE key=?', stock['packages'], key)
 
     def image_for(self, item_id: str) -> str | None:
         for table in ("picks", "purchases"):
@@ -252,15 +321,37 @@ class DB:
         return row["ts"] if row else None
 
     # ---- stock ----
-    def stock(self, key: str) -> sqlite3.Row | None:
-        return self.one("SELECT * FROM stock WHERE key = ?", key)
+    def stock(self, key: str) -> dict | None:
+        row = self.one("SELECT * FROM stock WHERE key = ?", key)
+        if not row:
+            return None
+        result = dict(row)
+        pick = self.pick(key)
+        if result['quantity'] is not None:
+            from . import units
+            if result['dimension'] == 'package':
+                compatible = not result['basis_item_id'] or (pick and result['basis_item_id'] == pick['item_id'])
+                result['packages'] = result['quantity'] if compatible else None
+            elif pick:
+                food = self.food(key)
+                amount = units.convert(units.Amount(result['quantity'], result['dimension']),
+                                       pick['size_dim'] or 'count', key, food['category'] if food else 'other')
+                result['packages'] = amount.qty / (pick['size_qty'] or 1) if amount else None
+            else:
+                result['packages'] = None
+        return result
 
     def set_stock(self, key: str, packages: float, confidence: float, bought: bool = False) -> None:
+        pick = self.pick(key)
+        size = pick['size_qty'] if pick and pick['size_qty'] else 1
+        dim = pick['size_dim'] if pick and pick['size_dim'] else ('count' if pick else 'package')
         self.run(
-            """INSERT INTO stock(key, packages, confidence, updated, last_bought) VALUES (?,?,?,?,?)
+            """INSERT INTO stock(key, packages, confidence, updated, last_bought, quantity, dimension, basis_item_id) VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(key) DO UPDATE SET packages=excluded.packages, confidence=excluded.confidence,
-               updated=excluded.updated, last_bought=COALESCE(excluded.last_bought, stock.last_bought)""",
+               updated=excluded.updated, last_bought=COALESCE(excluded.last_bought, stock.last_bought),
+               quantity=excluded.quantity, dimension=excluded.dimension, basis_item_id=excluded.basis_item_id""",
             key, max(packages, 0.0), confidence, now_iso(), now_iso() if bought else None,
+            max(packages, 0.0) * size, dim, pick['item_id'] if pick else None,
         )
 
     def set_restock(self, key: str, on: bool) -> None:
@@ -296,17 +387,24 @@ class DB:
 
     def save_review(self, week_start: str, data: dict, status: str = "pending") -> int:
         with self.tx() as c:
+            previous = self.latest_review()
+            trip_id = (previous['trip_id'] if previous and previous['status'] in {'pending', 'approved'}
+                       and not self.cart_run(previous['week_start'], previous['id']) else uuid.uuid4().hex)
             cur = c.execute(
-                "INSERT INTO reviews(week_start, created, status, data) VALUES (?,?,?,?)",
-                (week_start, now_iso(), status, json.dumps(data)),
+                "INSERT INTO reviews(week_start, created, status, data, trip_id) VALUES (?,?,?,?,?)",
+                (week_start, now_iso(), status, json.dumps(data), trip_id),
             )
+            c.execute("INSERT INTO trips VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, review_id=excluded.review_id",
+                      (trip_id, now_iso(), status, cur.lastrowid))
             return int(cur.lastrowid)
 
     def update_review(self, review_id: int, data: dict | None = None, status: str | None = None) -> None:
-        if data is not None:
-            self.run("UPDATE reviews SET data = ? WHERE id = ?", json.dumps(data), review_id)
-        if status is not None:
-            self.run("UPDATE reviews SET status = ? WHERE id = ?", status, review_id)
+        with self.tx():
+            if data is not None:
+                self.run("UPDATE reviews SET data = ? WHERE id = ?", json.dumps(data), review_id)
+            if status is not None:
+                self.run("UPDATE reviews SET status = ? WHERE id = ?", status, review_id)
+                self.run("UPDATE trips SET status=? WHERE id=(SELECT trip_id FROM reviews WHERE id=?)", status, review_id)
 
     def log(self, kind: str, **data: Any) -> None:
         self.run("INSERT INTO events(ts, kind, data) VALUES (?,?,?)", now_iso(), kind, json.dumps(data, default=str))
@@ -318,12 +416,20 @@ class DB:
     def save_settings(self, key: str, data: dict) -> None:
         self.run("INSERT OR REPLACE INTO settings(key, data) VALUES (?,?)", key, json.dumps(data))
 
-    def cart_run(self, week_start: str):
-        row = self.one("SELECT * FROM cart_runs WHERE week_start = ?", week_start)
+    def cart_run(self, week_start: str, review_id: int | None = None):
+        review = (self.one('SELECT * FROM reviews WHERE id=?', review_id) if review_id is not None else
+                  self.one('SELECT * FROM reviews WHERE week_start=? ORDER BY id DESC LIMIT 1', week_start))
+        if not review:
+            return None
+        row = self.one("""SELECT * FROM cart_runs WHERE week_start=? OR review_id IN
+                          (SELECT id FROM reviews WHERE trip_id=?) ORDER BY updated DESC LIMIT 1""",
+                       review['trip_id'], review['trip_id'])
         return {**dict(row), "data": json.loads(row["data"])} if row else None
 
     def save_cart_run(self, week_start: str, review_id: int, state: str, data: dict) -> None:
+        existing = self.cart_run(week_start, review_id)
+        key = existing['week_start'] if existing else self.one('SELECT trip_id FROM reviews WHERE id=?', review_id)['trip_id']
         self.run("""INSERT INTO cart_runs(week_start, review_id, state, data, updated) VALUES (?,?,?,?,?)
                     ON CONFLICT(week_start) DO UPDATE SET state=excluded.state,
                     data=excluded.data, updated=excluded.updated""",
-                 week_start, review_id, state, json.dumps(data), now_iso())
+                 key, review_id, state, json.dumps(data), now_iso())

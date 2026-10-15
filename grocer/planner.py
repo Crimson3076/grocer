@@ -31,6 +31,8 @@ class Meal:
     recipe_servings: float | None
     yield_question: bool
     factor: float
+    key: str = ''
+    unparsed: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -42,6 +44,8 @@ class Need:
     optional_only: bool = True
     sources: list[str] = field(default_factory=list)
     lines: list[str] = field(default_factory=list)
+    meal_keys: list[str] = field(default_factory=list)
+    meal_usage: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def add(self, amount: units.Amount | None, source: str, line: str, optional: bool) -> None:
         if amount is None:
@@ -89,6 +93,7 @@ def build_meals(entries: list[PlanEntry], recipes: dict[str, Recipe], db: DB,
             servings=servings, recipe_servings=r.servings,
             yield_question=not trusted and not override,
             factor=servings / base,
+            key=e.id or f'{e.date}|{e.entry_type}|{e.recipe_id}',
         ))
     return meals
 
@@ -174,7 +179,9 @@ def gather_needs(meals: list[Meal], recipes: dict[str, Recipe], db: DB, llm: LLM
             else:
                 pl = parse_line(ing.text)
             if not pl.food:
-                unparsed.append(f"{m.name}: {ing.text}")
+                unread = f"{m.name}: {ing.text}"
+                unparsed.append(unread)
+                m.unparsed.append(unread)
                 continue
             parsed.extend((m, part) for part in split_pairs(pl))
     canon = canonicalize([pl for _, pl in parsed], db, llm)
@@ -186,6 +193,11 @@ def gather_needs(meals: list[Meal], recipes: dict[str, Recipe], db: DB, llm: LLM
         if amt is not None:
             amt = units.Amount(amt.qty * m.factor, amt.dim)
         n.add(amt, m.name, pl.text, pl.optional)
+        if m.key not in n.meal_keys:
+            n.meal_keys.append(m.key)
+        if amt is not None:
+            usage = n.meal_usage.setdefault(m.key, {})
+            usage[amt.dim] = usage.get(amt.dim, 0) + amt.qty
     return needs, unparsed
 
 

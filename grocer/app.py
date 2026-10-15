@@ -11,9 +11,9 @@ import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -89,7 +89,11 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 @app.get("/")
 def root():
-    return RedirectResponse("/dinners")
+    from . import readiness
+    if not readiness.status()['configured']:
+        return RedirectResponse('/settings#setup')
+    row = jobs.db.latest_review()
+    return RedirectResponse('/review' if row else '/dinners')
 
 
 @app.get("/dinners")
@@ -166,7 +170,7 @@ def get_review():
         return {"status": "none"}
     data = json.loads(row["data"])
     next_cart = scheduler.get_job("cart")
-    return {**data, "id": row["id"], "status": row["status"], "summary": jobs.summary(data),
+    return {**data, "id": row["id"], 'trip_id': row['trip_id'], "status": row["status"], "summary": jobs.summary(data),
             "levels": list(planner.STOCK_LEVELS), "vnc_url": CONFIG.vnc_url,
             "order_minimum": CONFIG.order_minimum, "auto_cart": CONFIG.auto_cart_if_unreviewed,
             "next_cart": str(next_cart.next_run_time) if next_cart else None,
@@ -204,9 +208,14 @@ def build(notify: bool = False, wait: bool = False):
     return _job_response(jobs.start("build", "Updating the list", jobs.build_review, notify=notify), wait)
 
 
+class CheckoutIn(BaseModel):
+    quantities: dict[str, conint(strict=True, ge=0, le=999)] | None = None
+    manual_keys: list[str] = Field(default_factory=list)
+
+
 @app.post("/api/checked-out")
-def checked_out():
-    _direct(jobs.checked_out)
+def checked_out(body: CheckoutIn | None = None):
+    _direct(jobs.checked_out, body.quantities if body else None, body.manual_keys if body else [])
     return {"ok": True}
 
 
@@ -311,7 +320,6 @@ class MergeIn(BaseModel):
 @app.post("/api/merge")
 def merge(body: MergeIn):
     _direct(jobs.merge_by_hand, body.old, body.new)
-    jobs.rebuild_soon()
     return {"ok": True}
 
 
@@ -562,3 +570,125 @@ def cart_clear(body: ClearIn, wait: bool = False):
         jobs.wait_for(job)
         return jobs.status()["last"]
     return {"job": job}
+
+
+@app.exception_handler(RuntimeError)
+async def task_conflict(_request, error):
+    return JSONResponse(status_code=409, content={'detail': str(error)})
+
+
+@app.get('/api/setup')
+def setup_status():
+    from .readiness import status
+    return status()
+
+
+@app.post('/api/setup/check')
+def setup_check():
+    from .readiness import check
+    return check()
+
+
+class GroceryIn(BaseModel):
+    text: str = Field(min_length=1,max_length=120)
+
+
+@app.post('/api/groceries')
+def add_grocery(body: GroceryIn):
+    return {'key':_direct(jobs.add_grocery,body.text)}
+
+
+@app.get('/api/meals/pending')
+def pending_meals():
+    from .pantry import pending_meals
+    return {'meals': pending_meals()}
+
+
+class MealResolutionIn(BaseModel):
+    key: str
+    action: str = Field(pattern='^(cooked|skipped)$')
+
+
+@app.post('/api/meals/resolve')
+def resolve_meal(body: MealResolutionIn):
+    from .pantry import resolve_meal
+    _direct(resolve_meal,body.key,body.action)
+    return {'ok':True}
+
+
+@app.get('/api/jobs/recovery')
+def recovery_jobs():
+    from .task_history import recovery
+    return {'tasks':recovery(jobs.db)}
+
+
+@app.post('/api/jobs/{job_id}/resume')
+def resume_task(job_id: str):
+    from .task_history import resume
+    return {'job':_direct(resume,job_id)}
+
+
+@app.post('/api/jobs/{job_id}/dismiss')
+def dismiss_task(job_id: str):
+    jobs.db.run("UPDATE job_records SET state='dismissed' WHERE id=? AND state IN ('interrupted','queued','failed')",job_id)
+    jobs.changed()
+    return {'ok':True}
+
+
+@app.get('/api/cleanup')
+def cleanup_proposal():
+    from .cleanup import latest
+    return {'proposal':latest()}
+
+
+class MergeProposalIn(BaseModel):
+    id: str
+    groups: list[int]
+
+
+@app.post('/api/cleanup/apply')
+def apply_cleanup(body: MergeProposalIn):
+    from .cleanup import apply
+    _direct(apply,body.id,body.groups)
+    return {'ok':True}
+
+
+@app.post('/api/cleanup/{proposal_id}/undo')
+def undo_cleanup(proposal_id: str):
+    from .cleanup import undo
+    _direct(undo,proposal_id)
+    return {'ok':True}
+
+
+class DecisionIn(BaseModel):
+    key: str
+    decision: str = Field(pattern='^(manual|later)$')
+
+
+@app.post('/api/trip/decision')
+def trip_decision(body: DecisionIn):
+    with jobs.REVIEW_LOCK, jobs.db.tx():
+        if jobs.busy():
+            raise HTTPException(409, 'Wait for the current task to finish before updating this trip.')
+        row = jobs.db.latest_review()
+        run = jobs.db.cart_run(row['week_start'], row['id']) if row else None
+        if not run or run['state'] == 'checked_out':
+            raise HTTPException(409, 'No active cart to update')
+        plan = run['data']
+        if body.key not in plan.get('unresolved', []):
+            raise HTTPException(400, 'That ingredient does not need a decision')
+        plan.setdefault('decisions', {})[body.key] = body.decision
+        jobs.db.save_cart_run(row['week_start'], row['id'], run['state'], plan)
+        data = json.loads(row['data'])
+        data['cart_result'] = plan
+        jobs.db.update_review(row['id'], data=data)
+    jobs.changed()
+    return {'ok': True}
+
+
+@app.middleware('http')
+async def refresh_interface_assets(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith('/static/') or response.headers.get('content-type','').startswith('text/html'):
+        response.headers['Cache-Control'] = 'no-cache'
+    return response

@@ -171,8 +171,10 @@ def test_no_credit_until_checkout_and_checkout_is_idempotent(household):
     assert c.post("/api/checked-out").status_code == 200
     assert dict(db.stock("corn tortilla")) == stock
     assert db.latest_review()["status"] == "checked_out"
-    # those dinners now show as ordered and aren't picked for the next order
-    assert {r["key"] for r in db.all("SELECT key FROM meal_orders")} == set(review["meal_keys"]) != set()
+    # Unanswered ingredients and an unknown recipe yield keep these dinners unfinished.
+    assert db.all('SELECT key FROM meal_orders') == []
+    coverage = db.cart_run('2026-10-11')['data']['coverage']
+    assert all(not m['complete'] and m['missing'] for m in coverage)
 
 
 def test_rebuild_and_force_do_not_duplicate_completed_cart(household):

@@ -65,6 +65,7 @@ def locally_available(pick: dict | None) -> bool:
                 and pick.get("fulfillment") == settings["fulfillment"])
 
 
+@review_edit
 def set_walmart_settings(store_id: str, fulfillment: str) -> None:
     if busy():
         raise RuntimeError("Wait for the current job to finish before changing stores.")
@@ -75,6 +76,7 @@ def set_walmart_settings(store_id: str, fulfillment: str) -> None:
     row = db.latest_review()
     if row and row["status"] in {"pending", "approved", "failed"}:
         data = json.loads(row["data"])
+        data['stale'] = True
         for item in data["items"]:
             if item.get("pick"):
                 item["pick"]["local_available"] = False
@@ -87,11 +89,14 @@ def editable_review() -> None:
         if STATE.get("job") and STATE["job"]["kind"] == "cart":
             raise RuntimeError("Wait for the cart check to finish before editing the list.")
     row = db.latest_review()
-    if row and (db.cart_run(row["week_start"]) or row["status"] in {"carted", "checked_out"}):
+    if row and (db.cart_run(row["week_start"], row["id"]) or row["status"] in {"carted", "checked_out"}):
         raise RuntimeError("This order is already in progress. Finish it in Walmart before editing a new list.")
 
 def delete_food(key: str, keep_manual: bool = False) -> None:
-    """Forget an ingredient entirely (junk names, duplicates). Recipes that use it get re-read next build."""
+    """Forget an ingredient only when no active trip or dinner depends on it."""
+    ingredient_edit_allowed()
+    if db.one('SELECT 1 FROM reservations WHERE food_key=?', key):
+        raise RuntimeError('Mark the dinners using this ingredient cooked or skipped before deleting it.')
     pick = db.pick(key)
     if keep_manual and pick and pick["source"] == "manual":
         return
@@ -124,7 +129,7 @@ def _repair_generic_names() -> None:
         log.info("removed misread names: %s", junk)
 
 
-_repair_generic_names()
+# Legacy repairs are available for diagnosis, never run automatically.
 
 
 PICK_RANK = {"manual": 3, "history": 2, "search": 1}
@@ -141,12 +146,29 @@ def merge_into(old: str, new: str) -> None:
         db.save_pick(new, dict(po, image=po["image_url"]), approved=bool(po["approved"]), source=po["source"] or "search")
     so, sn = db.stock(old), db.stock(new)
     if so and not sn:
-        db.set_stock(new, so["packages"], so["confidence"])
+        db.run('''INSERT INTO stock(key,packages,confidence,updated,last_bought,restock,quantity,dimension,basis_item_id)
+                  SELECT ?,packages,confidence,updated,last_bought,restock,quantity,dimension,basis_item_id
+                  FROM stock WHERE key=?''', new, old)
+        normalized = db.stock(new)
+        if normalized['packages'] is None:
+            db.run('UPDATE stock SET confidence=MIN(confidence,0.3) WHERE key=?', new)
+        else:
+            db.run('UPDATE stock SET packages=? WHERE key=?', normalized['packages'], new)
     if so and so["restock"]:
         db.set_restock(new, True)
     fo, fn = db.food(old), db.food(new)
     if fo["staple"] or fo["brand_lock"]:
         db.set_food(new, staple=max(fo["staple"], fn["staple"]), brand_lock=max(fo["brand_lock"], fn["brand_lock"]))
+    from .pantry import _convert
+    for reservation in db.all('SELECT * FROM reservations WHERE food_key=?', old):
+        target = db.one('SELECT * FROM reservations WHERE meal_key=? AND food_key=?', reservation['meal_key'], new)
+        dim = target['dimension'] if target else reservation['dimension']
+        quantity = _convert(reservation['quantity'], reservation['dimension'], dim, new)
+        if quantity is None:
+            raise RuntimeError('The reserved ingredient amounts cannot be combined safely. Keep these ingredients separate.')
+        db.run('INSERT INTO reservations VALUES (?,?,?,?) ON CONFLICT(meal_key,food_key) DO UPDATE SET quantity=excluded.quantity',
+               reservation['meal_key'], new, quantity + (target['quantity'] if target else 0), dim)
+    db.run('DELETE FROM reservations WHERE food_key=?', old)
     db.merge_food(old, new)
 
 
@@ -171,7 +193,7 @@ def _merge_spelling_duplicates() -> None:
         log.info("merged spelling duplicates: %s", merged)
 
 
-_merge_spelling_duplicates()
+# Legacy repairs are available for diagnosis, never run automatically.
 
 
 def _repair_pairs_and_choices() -> None:
@@ -195,7 +217,7 @@ def _repair_pairs_and_choices() -> None:
         log.info("fixed combined ingredient names: %s", fixed)
 
 
-_repair_pairs_and_choices()
+# Legacy repairs are available for diagnosis, never run automatically.
 
 
 def _repair_never_bought() -> None:
@@ -215,7 +237,7 @@ def _repair_never_bought() -> None:
                  sorted(set(bad) | set(foods)))
 
 
-_repair_never_bought()
+# Legacy repairs are available for diagnosis, never run automatically.
 
 REVIEW_TAG = "grocer_review"
 STATUS_TAG = "grocer_status"
@@ -253,7 +275,11 @@ def raise_alert() -> None:
 browser.on_challenge = _on_challenge
 browser.on_challenge_cleared = _on_challenge_cleared
 browser.on_progress = lambda msg: progress(step=msg)
-browser.on_login_ok = lambda: resolve_alert()
+def _login_ok():
+    db.save_settings('walmart_session', {'signed_in': True, 'checked': __import__('grocer.db', fromlist=['now_iso']).now_iso()})
+    resolve_alert()
+
+browser.on_login_ok = _login_ok
 # the browsing pace is learned and remembered across restarts (BROWSER_MIN_GAP is only the starting point)
 _pace = db.settings("browser_pace") or {}
 # an earlier version blamed every robot check on speed and crawled; start from a sane pace again
@@ -323,12 +349,21 @@ def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
     """Run a long task on the browser thread and report progress. One at a time."""
     with _plock:
         if STATE["job"]:
-            return dict(STATE["job"], already=True)
+            raise RuntimeError('Another task is running. This action was not queued. Try again when it finishes.')
         job = {"id": uuid.uuid4().hex[:8], "kind": kind, "label": label, "step": "Starting",
                "done": 0, "total": 0, "waiting": False, "started": time.time()}
         STATE["job"] = job
 
+    from . import task_history
+    try:
+        task_history.record(db, job, fn, args, kwargs)
+    except Exception:
+        with _plock:
+            STATE['job'] = None
+        raise
+
     def run():
+        task_history.finish(db, job, 'running')
         try:
             result = fn(*args, **kwargs)
             failed = kind == "cart" and isinstance(result, dict) and result.get("failed")
@@ -339,7 +374,7 @@ def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
             raise
 
     FUTURES[job["id"]] = WORKER.submit(run)
-    return dict(job)
+    return dict(job, state='accepted')
 
 
 def _finish(state: str, error: str | None, message: str | None, result) -> None:
@@ -349,26 +384,25 @@ def _finish(state: str, error: str | None, message: str | None, result) -> None:
         job["result"] = result if isinstance(result, dict) and job.get("kind") != "build" else None
         STATE["last"], STATE["job"] = job, None
         STATE["version"] += 1
-        again = STATE.pop("rebuild_after", False)
-    if again:
-        start("build", "Updating the list", build_review, notify=False)
+    from . import task_history
+    task_history.finish(db, job, state, error)
+    task_history.dispatch_rebuild()
 
 
 def rebuild_soon() -> dict:
-    """Rebuild now, or right after the job that's running."""
-    with _plock:
-        if STATE["job"]:
-            STATE["rebuild_after"] = True
-            return {"queued": True}
-    return start("build", "Updating the list", build_review, notify=False)
+    """Persist and coalesce rebuild requests without taking database locks under the progress lock."""
+    from .task_history import queue_rebuild
+    return queue_rebuild()
 
 
 def _message(kind: str, result) -> str:
     r = result if isinstance(result, dict) else {}
     if kind == "build":
         s = summary(r) if r.get("items") is not None else {}
-        return f"List updated: {s.get('buy', 0)} items, about ${s.get('total', 0):.0f}" if s else "List updated"
+        return f"List updated: {s.get('buy', 0)} item{'s' if s.get('buy', 0) != 1 else ''}, about ${s.get('total', 0):.0f}" if s else "List updated"
     if kind == "clear":
+        if r.get('protected'):
+            return r['message']
         n = r.get("removed", 0)
         msg = f"Took {n} item{'s' if n != 1 else ''} out of your Walmart cart"
         return msg + (f", {r['left']} still there" if r.get("left") else "")
@@ -387,8 +421,8 @@ def _message(kind: str, result) -> str:
             msg += f", {len(r['failed'])} couldn't be merged"
         return msg
     if kind == "dedupe":
-        n = len(r.get("merged", []))
-        return f"Merged {n} duplicate ingredient{'s' if n != 1 else ''}" if n else "No duplicates found"
+        n = len(r.get('groups', []))
+        return f'{n} suggested ingredient groups ready to review' if n else 'No duplicates found'
     if kind == "cart":
         if r.get("failed"):
             return r["failed"]
@@ -400,17 +434,21 @@ def _message(kind: str, result) -> str:
 
 def status() -> dict:
     with _plock:
-        bg = dict(STATE["bg"]) if STATE.get("bg") else None
+        bg = dict(STATE['bg']) if STATE.get('bg') else None
         if bg and _image_queue:
-            bg["left"] = len(_image_queue)
-        return {"job": dict(STATE["job"]) if STATE["job"] else None,
-                "bg": bg,
-                "last": dict(STATE["last"]) if STATE["last"] else None,
-                "version": STATE["version"]}
+            bg['left'] = len(_image_queue)
+        result = {'job':dict(STATE['job']) if STATE['job'] else None,
+                  'bg':bg, 'last':dict(STATE['last']) if STATE['last'] else None,
+                  'version':STATE['version']}
+    from .task_history import recovery
+    result['recovery'] = recovery(db)
+    return result
 
 
 def _friendly(e: Exception) -> str:
     if isinstance(e, LoginRequired):
+        from .db import now_iso
+        db.save_settings('walmart_session', {'signed_in': False, 'checked': now_iso()})
         return "Walmart sign-in expired. Open the browser and sign in, then try again."
     if isinstance(e, BrowserChallenge):
         return "Walmart's robot check wasn't solved in time. Open the browser, press and hold, then try again."
@@ -584,15 +622,23 @@ def _item_entry(need: planner.Need, pick: dict | None, alts: list[dict], is_new:
     food = db.food(need.key)
     stock = db.stock(need.key)
     staple = bool(food and food["staple"]) or need.key in on_hand
-    status, qty = planner.decide(need, pick, stock["packages"] if stock else None, staple)
+    from .pantry import reserved_packages, reservation_uncertain
+    available = stock['packages'] if stock and stock['confidence'] >= 0.5 and not reservation_uncertain(need.key, need.meal_keys) else None
+    if available is not None:
+        available = max(available - reserved_packages(need.key, need.meal_keys), 0)
+    status, qty = planner.decide(need, pick, available, staple)
     if need.optional_only and not stock and status == "buy" and need.category in planner.ASK_CATEGORIES:
         status, qty = "check", 0
+    if stock and stock['restock'] and pick:
+        status, qty = 'buy', max(1, qty)
     if qty > 0 and not pick:
         status, qty = "nopick", 0
     use_pk = None
     if pick:
         use_pk = planner.packages_needed(need, pick.get("size_qty"), pick.get("size_dim"), pick.get("sales_unit"))
     return {
+        "meal_keys": need.meal_keys,
+        "meal_usage": need.meal_usage,
         "use_pk": use_pk,
         "key": need.key,
         "category": need.category,
@@ -606,7 +652,8 @@ def _item_entry(need: planner.Need, pick: dict | None, alts: list[dict], is_new:
         "qty": qty,
         "staple": staple,
         "brand_lock": bool(food and food["brand_lock"]),
-        "stock": stock["packages"] if stock else None,
+        "stock": available,
+        "reserved": reserved_packages(need.key, need.meal_keys),
         "pick": pick,
         "new_pick": is_new,
         "alternatives": alts,
@@ -616,7 +663,8 @@ def _item_entry(need: planner.Need, pick: dict | None, alts: list[dict], is_new:
 def recompute_item(item: dict, on_hand: set[str] | None = None) -> dict:
     need = planner.Need(key=item["key"], category=item["category"], amounts=item["amounts"],
                         unquantified=item["unquantified"], optional_only=item["optional_only"],
-                        sources=item["sources"], lines=item["lines"])
+                        sources=item["sources"], lines=item["lines"],
+                        meal_keys=item.get("meal_keys", []), meal_usage=item.get("meal_usage", {}))
     if item.get("status") == "skip":
         return item
     row = db.pick(item["key"])
@@ -633,25 +681,20 @@ def build_review(notify: bool = True) -> dict:
     began = time.time()
     start, end = shopping_week()
     prev = db.latest_review()
-    if prev and prev["week_start"] == start.isoformat() and (db.cart_run(prev["week_start"])
-                                                            or prev["status"] in {"carted", "checked_out"}):
-        return json.loads(prev["data"])
+    if prev and prev["status"] != "checked_out" and db.cart_run(prev["week_start"], prev["id"]):
+        raise RuntimeError('Finish or reopen this shopping trip before rebuilding the list.')
     if db.one("SELECT 1 FROM cart_runs WHERE state != 'checked_out' LIMIT 1"):
         raise RuntimeError("Confirm checkout or reset the current cart plan before building another week.")
-    if notify and _dedupe_due():
-        progress(step="Tidying duplicate ingredients")
-        try:
-            dedupe_foods()
-        except Exception as e:  # noqa: BLE001
-            log.warning("dedupe failed: %s", e)
     progress(step="Reading the dinners you picked from Mealie")
     from . import dinners
     entries = dinners.selected()
-    keys = {(e.date, e.entry_type, e.recipe_id): dinners.key_of(e) for e in entries}
+    from .trips import input_version
+    keys = {dinners.key_of(e) for e in entries}
     recipes = {}
     for e in entries:
         if e.recipe_id and e.recipe_id not in recipes:
             recipes[e.recipe_id] = mealie.recipe(e.recipe_slug or e.recipe_id)
+    version = input_version(entries, recipes)
     meals = planner.build_meals(entries, recipes, db, CONFIG.default_servings, CONFIG.max_trusted_yield)
     needs, unparsed = planner.gather_needs(meals, recipes, db, llm)
     from .parse import norm_key
@@ -692,7 +735,7 @@ def build_review(notify: bool = True) -> dict:
             continue
         food = db.food(key)
         stock = db.stock(key)
-        if ((food and food["staple"]) or key in on_hand) and not (stock and stock["packages"] <= planner.STOCK_LEVELS["low"]):
+        if ((food and food["staple"]) or key in on_hand) and not (stock and (stock["packages"] is None or stock["packages"] <= planner.STOCK_LEVELS["low"])):
             items.append(_item_entry(need, dict(db.pick(key)) if db.pick(key) else None, [], False, on_hand))
             continue
         if blocked:
@@ -709,7 +752,7 @@ def build_review(notify: bool = True) -> dict:
         # rebuilding mid-review (servings changed, etc.) keeps the edits already made
         status = "pending"
         prev = db.latest_review()
-        if prev and prev["status"] in {"pending", "approved"} and not db.cart_run(prev["week_start"]):
+        if prev and prev["status"] in {"pending", "approved"} and not db.cart_run(prev["week_start"], prev["id"]):
             status = "pending"  # a changed/rebuilt list must be approved again
             old = {i["key"]: i for i in json.loads(prev["data"])["items"]}
             existing_keys = {i["key"] for i in items}
@@ -734,11 +777,12 @@ def build_review(notify: bool = True) -> dict:
             by_status.setdefault(it["status"], []).append(f'{it["key"]} ({it.get("category")})')
         log.info("list for %d dinners: %s", len(meals), {k: sorted(v) for k, v in by_status.items()})
         data = {
+            "input_version": version,
             "week_start": start.isoformat(),
             "week_end": end.isoformat(),
             "built": datetime.now(ZoneInfo(CONFIG.tz)).isoformat(timespec="minutes"),
-            "meals": [{**m.__dict__, "key": keys.get((m.date, m.entry_type, m.recipe_id))} for m in meals],
-            "meal_keys": sorted(keys.values()),
+            "meals": [m.__dict__ for m in meals],
+            "meal_keys": sorted(keys),
             "items": items,
             "unparsed": unparsed,
             "login_ok": login_ok,
@@ -777,11 +821,12 @@ def summary(data: dict) -> dict:
 
 def notify_review(data: dict) -> None:
     s = summary(data)
-    if not data["meals"]:
-        ha.notify("Groceries", "No dinners are planned for next week yet.", tag=REVIEW_TAG,
+    if not data["meals"] and not data['items']:
+        ha.notify("Groceries", "Nothing to buy yet. Add groceries or choose dinners.", tag=REVIEW_TAG,
                   url=f"{CONFIG.public_url}/review")
         return
-    parts = [f"{len(data['meals'])} dinners, {s['buy']} items, about ${s['total']:.0f}."]
+    trip_label = f"{len(data['meals'])} dinners" if data['meals'] else 'Groceries-only trip'
+    parts = [f"{trip_label}, {s['buy']} items, about ${s['total']:.0f}."]
     asks = len(s["checks"]) + len(s["yield_questions"])
     if asks:
         parts.append(f"{asks} quick question{'s' if asks != 1 else ''}.")
@@ -820,11 +865,11 @@ def run_cart(force: bool = False) -> dict:
 def send_to_walmart() -> dict:
     """The one button: approve the list (when it can be) and put it in the Walmart cart now."""
     row = db.latest_review()
-    if row and row["status"] == "pending":
-        try:
-            approve()
-        except Exception as e:  # noqa: BLE001  unanswered bits are skipped by the fill, not a reason to stop
-            log.info("sending without full approval: %s", e)
+    if not row:
+        raise RuntimeError('Build a shopping list first')
+    if not db.cart_run(row['week_start'], row['id']):
+        from .trips import require_current
+        require_current(json.loads(row['data']))
     return run_cart(force=True)
 
 
@@ -877,7 +922,9 @@ def set_stock_level(food_text: str, level: str) -> str:
 
 @review_edit
 def _add_restock_to_pending(key: str) -> None:
-    """A "we're out of X" between the review and the cart run still makes this week's order."""
+    """A new restock enters the draft, or waits for the next trip if a cart is active."""
+    if busy() and STATE['job']['kind'] == 'cart':
+        return
     row = db.latest_review()
     if not row or row["status"] not in {"pending", "approved"} or not db.stock(key)["restock"]:
         return
@@ -951,6 +998,8 @@ def _pending() -> tuple[dict, int]:
 
 @review_edit
 def _refresh_pending(match) -> None:
+    if busy() and STATE['job']['kind'] == 'cart':
+        return  # current cart inputs are frozen; the stock change applies to the next trip
     row = db.latest_review()
     if not row or row["status"] not in {"pending", "approved"}:
         return
@@ -1006,6 +1055,8 @@ def approve() -> None:
     editable_review()
     configure_browser()
     data, review_id = _pending()
+    from .trips import require_current
+    require_current(data)
     for i in data["items"]:
         if i["status"] == "buy" and not locally_available(i.get("pick")):
             raise RuntimeError("Rebuild the list to verify local availability before approving it.")
@@ -1017,14 +1068,20 @@ def approve() -> None:
     db.log("approved", id=review_id)
 
 
+@review_edit
 def set_servings(date_: str, entry_type: str, recipe_id: str, servings: float) -> dict:
-    editable_review()
+    row = db.latest_review()
+    if not row or row['status'] != 'checked_out':
+        editable_review()
     db.set_meal_servings(date_, entry_type, recipe_id, float(servings))
     return rebuild_soon()
 
 
+@review_edit
 def set_recipe_yield(recipe_id: str, servings: float) -> dict:
-    editable_review()
+    row = db.latest_review()
+    if not row or row['status'] != 'checked_out':
+        editable_review()
     db.set_recipe_yield(recipe_id, float(servings))
     return rebuild_soon()
 
@@ -1055,6 +1112,10 @@ def pantry() -> list[dict]:
                       "source": p["source"] or "search", "approved": bool(p["approved"])} if p else None),
             "stock": st["packages"] if st else None,
             "restock": bool(st and st["restock"]),
+            'reserved': __import__('grocer.pantry', fromlist=['reserved_packages']).reserved_packages(key),
+            'quantity': st['quantity'] if st else None, 'dimension': st['dimension'] if st else None,
+            'confidence': st['confidence'] if st else None,
+            'reserved_unknown': __import__('grocer.pantry', fromlist=['reservation_uncertain']).reservation_uncertain(key),
             "this_week": w is not None,
             "status": w["status"] if w else None,
             "sources": w["sources"] if w else [],
@@ -1168,7 +1229,7 @@ def check_checkout() -> str | None:
     row = db.latest_review()
     if not row or row["status"] != "carted":
         return None
-    run = db.cart_run(row["week_start"])
+    run = db.cart_run(row["week_start"], row["id"])
     if not run:
         return None
     targets = [str(i) for i in (run["data"].get("targets") or {})]
@@ -1206,11 +1267,12 @@ def start_checkout_watch() -> None:
     threading.Thread(target=_checkout_watch_loop, name="checkout-watch", daemon=True).start()
 
 
-def checked_out() -> None:
+@review_edit
+def checked_out(quantities=None, manual_keys=None) -> None:
     if busy():
         raise RuntimeError("Wait for the cart job to finish before confirming checkout.")
     from .ordering import confirm_checkout
-    confirm_checkout()
+    confirm_checkout(quantities, manual_keys)
 
 
 def clear_cart(scope: str = "ours") -> dict:
@@ -1218,30 +1280,61 @@ def clear_cart(scope: str = "ours") -> dict:
     current order; "all": everything in the cart. Never touches checkout."""
     row = db.latest_review()
     ours: set[str] = set()
-    run = db.cart_run(row["week_start"]) if row else None
+    run = db.cart_run(row["week_start"], row["id"]) if row else None
     if run:
         ours = {str(i) for i in (run["data"].get("targets") or {})} | \
                {str(l["pick"]["item_id"]) for l in run["data"].get("lines") or [] if l.get("pick")}
     if scope == "ours" and not ours:
         raise ValueError("The app hasn't put anything in the Walmart cart for this order")
     progress(step="Opening your Walmart cart")
-    result = browser.remove_from_cart(ours if scope == "ours" else None)
+    protected = []
+    if scope == 'ours':
+        current = browser.cart_contents()
+        if current is None:
+            raise RuntimeError('The cart could not be read. Nothing was removed. Check it in Walmart.')
+        from .trips import owned_removals
+        safe, protected = owned_removals(run['data'], current)
+        result = browser.remove_from_cart(safe) if safe else {'removed': [], 'left': current}
+    else:
+        result = browser.remove_from_cart(None)
     removed = result["removed"]
     left = result["left"]
     # the order is no longer in the cart: let the list be edited and sent again
-    if row and run and row["status"] != "checked_out" and (scope == "all" or ours <= set(removed) or
-                                                           (left is not None and not (ours & set(left)))):
+    if row and run and row["status"] != "checked_out" and not protected and left is not None and not (ours & set(left)):
         data = json.loads(row["data"])
         data.pop("cart_result", None)
         with db.tx() as c:
-            c.execute("DELETE FROM cart_runs WHERE week_start=?", (row["week_start"],))
-            c.execute("UPDATE reviews SET status='pending', data=? WHERE id=?", (json.dumps(data), row["id"]))
+            c.execute("DELETE FROM cart_runs WHERE week_start=?", (run["week_start"],))
+            db.update_review(row['id'], data=data, status='pending')
         ha.clear(STATUS_TAG)
+    elif row and run and row['status'] != 'checked_out':
+        # Removing some owned lines must invalidate the old "cart ready" result.
+        # Keep the durable plan so a retry can add deficits without duplicating shared lines.
+        from .cart import deficits
+        plan = run['data']
+        if left is None:
+            plan['error'] = 'The cart changed but could not be checked. Open Walmart before retrying.'
+            plan['cart_before'] = None
+            state, status = 'needs_check', 'failed'
+        else:
+            plan['missing'] = [iid for iid, _ in deficits(plan['targets'], left)]
+            for iid in removed:
+                if not left.get(iid):
+                    plan.setdefault('added_quantities', {})[iid] = 0
+            plan['added'] = sum(str(line['pick']['item_id']) not in plan['missing'] for line in plan['lines'])
+            state = status = 'partial' if plan['missing'] else 'carted'
+        data = json.loads(row['data'])
+        data['cart_result'] = plan
+        db.save_cart_run(row['week_start'], row['id'], state, plan)
+        db.update_review(row['id'], data=data, status=status)
     db.log("cart_cleared", scope=scope, removed=removed)
     changed()
-    return {"removed": len(removed), "left": None if left is None else sum(left.values()), "scope": scope}
+    return {"removed": len(removed), "left": None if left is None else sum(left.values()), "scope": scope,
+            'protected': protected,
+            'message': 'Shared or changed items were left in Walmart for you to adjust.' if protected else 'Cart checked.'}
 
 
+@review_edit
 def reset_cart_plan() -> None:
     if busy():
         raise RuntimeError("Wait for the current job to finish before resetting the plan.")
@@ -1252,9 +1345,12 @@ def reset_cart_plan() -> None:
         raise RuntimeError("A completed order cannot be reset. Build the next shopping week instead.")
     data = json.loads(row["data"])
     data.pop("cart_result", None)
+    run = db.cart_run(row['week_start'], row['id'])
     with db.tx() as c:
-        c.execute("DELETE FROM cart_runs WHERE week_start=?", (row["week_start"],))
-        c.execute("UPDATE reviews SET status='pending', data=? WHERE id=?", (json.dumps(data), row["id"]))
+        if run:
+            db.log('cart_plan_archived', trip=row['trip_id'], plan=run['data'])
+            c.execute("DELETE FROM cart_runs WHERE week_start=?", (run["week_start"],))
+        db.update_review(row['id'], data=data, status='pending')
     ha.clear(STATUS_TAG)
     db.log("cart_plan_reset", week=row["week_start"])
     changed()
@@ -1380,53 +1476,25 @@ def _confirmed(groups: list[dict], step: str = "Double-checking") -> list[dict]:
 
 
 def dedupe_foods() -> dict:
-    """Let the model spot ingredients you'd buy as one product, and merge them."""
-    merged = []
-    cats = [r["category"] for r in db.all("SELECT DISTINCT category FROM foods WHERE category != 'none'")]
-    for n, cat in enumerate(cats, 1):
-        names = [r["key"] for r in db.all("SELECT key FROM foods WHERE category = ? ORDER BY key", cat)]
-        progress(done=n - 1, total=len(cats), step=f"Looking for duplicates in {cat}")
-        if len(names) < 2:
-            continue
-        try:
-            groups = _confirmed(llm.find_duplicates(names), f"Double-checking {cat}")
-        except Exception as e:  # noqa: BLE001
-            log.warning("duplicate check failed for %s: %s", cat, e)
-            continue
-        for g in groups:
-            # if you chose a product for one of them, keep that name
-            members = [g["keep"], *g["same"]]
-            keep = max(members, key=lambda k: (PICK_RANK.get((db.pick(k) or {"source": None})["source"] or "", 0),
-                                               k == g["keep"]))
-            for name in members:
-                if name != keep and db.food(name):
-                    merge_into(name, keep)
-                    merged.append(f"{name} -> {keep}")
-    db.log("dedupe_done", merged=merged)
-    if merged:
-        log.info("merged duplicates: %s", merged)
-        _refresh_after_merge()
-    changed()
-    return {"merged": merged}
+    """Propose local ingredient merges. A person reviews before anything changes."""
+    from .cleanup import scan
+    return scan()
 
 
-def _refresh_after_merge() -> None:
-    """The saved list still has the old names; rebuild it after the current job."""
-    with _plock:
-        STATE["rebuild_after"] = True
-
-
-def _dedupe_due() -> bool:
-    last = db.last_event("dedupe_done")
-    if not last:
-        return True
-    return (datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(last)).days >= DEDUPE_EVERY_DAYS
+def ingredient_edit_allowed():
+    if busy():
+        raise RuntimeError('Wait for the current task to finish before changing ingredient records.')
+    row = db.latest_review()
+    if row and row['status'] != 'checked_out' and db.cart_run(row['week_start'],row['id']):
+        raise RuntimeError('Finish or reopen the active cart before changing ingredient records.')
 
 
 def merge_by_hand(old: str, new: str) -> None:
+    ingredient_edit_allowed()
     if not db.food(old) or not db.food(new):
         raise ValueError("Unknown ingredient")
-    merge_into(old, new)
+    from .cleanup import apply_manual
+    apply_manual(old,new)
     db.log("merged_by_hand", old=old, new=new)
 
 
@@ -1511,6 +1579,9 @@ def mealie_cleanup_proposal() -> dict | None:
 
 def mealie_cleanup_apply(choices: list[dict]) -> dict:
     """choices: [{"keep": food_id, "same": [food_id, ...]}], exactly what was ticked on the page."""
+    row = db.latest_review()
+    if row and row['status'] != 'checked_out' and db.cart_run(row['week_start'],row['id']):
+        raise RuntimeError('Finish or reopen the active cart before cleaning up ingredients.')
     progress(step="Making a Mealie backup first")
     backed_up = mealie.backup()
     if not backed_up:
@@ -1551,3 +1622,15 @@ def mealie_cleanup_apply(choices: list[dict]) -> dict:
     db.log("mealie_cleanup_applied", done=done, failed=failed, backed_up=backed_up, merged_ids=merged_ids)
     changed()
     return {"done": done, "failed": failed, "backed_up": backed_up}
+
+
+def add_grocery(text: str) -> str:
+    if not text.strip() or len(text) > 120:
+        raise ValueError('Enter a grocery item up to 120 characters')
+    key = resolve_food(text.strip().lower())
+    if not db.stock(key):
+        db.set_stock(key, 0, 0.5)
+    db.set_restock(key, True)
+    _add_restock_to_pending(key)
+    changed()
+    return key
