@@ -21,52 +21,29 @@ Walmart browsing is paced automatically: the app learns how fast it can go, slow
 
 ## Setup
 
+The image is built by GitHub on every change to `main` and published as `ghcr.io/crimson3076/grocer:latest`.
+
 1. On the Ollama host: `ollama pull qwen3:8b`.
 2. Create API tokens in Mealie (Profile, API Tokens) and Home Assistant (Profile, Security, Long-lived access tokens).
-3. `cp .env.example .env`, then fill in the tokens, URLs and phones to notify. `.env` is ignored by git; never commit it.
-4. Start it: `docker compose up -d --build`, or `bash deploy.sh` for the NODE2 layout (copies over SSH, builds, restarts; asks for tokens the first time).
+3. Copy `.env.example` to `/mnt/user/appdata/grocer/grocer.env` and fill in the tokens, URLs and phones to notify. Settings live there, next to the data, so the container itself holds nothing you'd lose.
+4. Create the container:
+   - **Unraid:** stop and remove any old Grocer container first (they can't share the ports or the Chrome profile). Copy `unraid/grocer.xml` to `/boot/config/plugins/dockerMan/templates-user/my-grocer.xml`, then Docker, Add Container, pick "grocer" and Apply. Updates are then the usual "Apply update" in the Docker tab.
+   - **Anywhere else:** `docker compose up -d` (or `bash deploy.sh` to pull and recreate over SSH).
 5. Open `http://<server>:8790/signin`, sign in to Walmart, and pick your store and pickup or delivery in that browser.
 6. In **Settings**, enter the same store number and method.
 7. Go to **Dinners**, pick, then **Next: check the list**.
 
-Data lives in `/data` in the container (`/mnt/user/appdata/grocer` on NODE2): the SQLite database, the Chrome profile and image caches. Rebuilding keeps it. New tables and columns are added on startup.
+Data lives in `/data` in the container (`/mnt/user/appdata/grocer` on the host): `grocer.env`, the SQLite database, the Chrome profile and image caches. Deleting, updating or re-pulling the container keeps all of it. New tables and columns are added on startup. Variables set on the container itself override `grocer.env`.
 
-## Unraid with the published image
+## Pulling a private image
 
-GitHub Actions tests and publishes an Intel/AMD 64-bit image on every push to
-`main`: `ghcr.io/crimson3076/grocer:latest`. Each build also has a tag containing
-the full commit SHA for rollback. The image is private by default.
-
-Before pulling a private image, create a GitHub personal access token (classic)
-with `read:packages`, then run in the Unraid terminal:
+GitHub Actions tests and publishes an Intel/AMD 64-bit image on every push to `main`: `ghcr.io/crimson3076/grocer:latest`, plus a tag with the full commit SHA for rollback. While the repo is private the image is too, so the server has to log in once. Create a GitHub personal access token (classic) with only `read:packages`, then in the Unraid terminal:
 
 ```bash
 docker login ghcr.io -u Crimson3076
 ```
 
-Paste the token at the password prompt. Do not put it in the container's
-environment variables. See GitHub's [Container registry authentication guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
-
-In Unraid's Docker tab, choose **Add Container** and set:
-
-| Field | Value |
-| --- | --- |
-| Name | `grocer` |
-| Repository | `ghcr.io/crimson3076/grocer:latest` |
-| Network type | `bridge` |
-| WebUI (Advanced View) | `http://[IP]:[PORT:8790]/` |
-| Extra Parameters (Advanced View) | `--shm-size=1g` |
-| Port (TCP) | Host `8790`, container `8790` |
-| Port (TCP) | Host `6080`, container `6080` |
-| Path | Host `/mnt/user/appdata/grocer`, container `/data`, read/write |
-
-Add environment variables from `.env.example`, including your existing tokens
-and service URLs. Keep the existing appdata folder to preserve the database and
-Walmart sign-in. Stop the old Grocer container before applying the new one so
-they do not share ports or the Chrome profile at the same time. Keep both ports
-on the LAN. Use Unraid's image update control after a new build finishes.
-
-For local source builds, the existing Compose and `deploy.sh` options still work.
+Paste the token at the password prompt. Don't put it in `grocer.env` or the container's variables. Alternatively, make just the package public under the package's settings on GitHub; the code stays private.
 
 ## Schedule
 
@@ -95,4 +72,4 @@ python3 -m pip install -r requirements-dev.txt
 python3 -m pytest -q tests
 ```
 
-They use fake Mealie, Walmart, Ollama and Home Assistant services and never touch the real ones. GitHub Actions runs them on every push and pull request.
+They use fake Mealie, Walmart, Ollama and Home Assistant services and never touch the real ones. GitHub Actions runs them on every push and pull request, and only publishes a new image when they pass.

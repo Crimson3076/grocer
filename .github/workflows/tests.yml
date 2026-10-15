@@ -2,6 +2,7 @@ name: tests
 
 on:
   push:
+    branches-ignore: [main]   # main is tested by image.yml before publishing
   pull_request:
 
 jobs:

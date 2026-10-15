@@ -36,7 +36,7 @@ All tests must pass. They use fakes (`FakeMealie`, `PlanMealie`, `CleanupMealie`
 
 1. **Never place an order or pay.** The app fills the cart; a person checks out in Walmart.
 2. **Only a confirmed checkout credits pantry stock.** Adding to the cart is not a purchase.
-3. **Never commit secrets.** `.env` holds the Mealie and Home Assistant tokens and is ignored by git. Only `.env.example` (with empty tokens) belongs in the repo.
+3. **Never commit secrets.** `.env` / `grocer.env` hold the Mealie and Home Assistant tokens and is ignored by git. Only `.env.example` (with empty tokens) belongs in the repo.
 4. **One browser thread.** Playwright's sync API is bound to the thread that started it. All browser work goes through the single worker in `jobs.py`; page requests and quick edits must never wait on it (use cached data, return a friendly 504 on timeout).
 5. **Be gentle with Walmart.** Keep the learned pacing, warm-ups, caching and typed search. Do not add parallel browsing, tighter loops or extra product-page visits. Robot checks are solved by a person over the noVNC view.
 6. **Local store only.** A product counts only if it can be picked up or delivered today or tomorrow from the chosen store. Shipping-only and marketplace sellers are excluded, and missing data never means "available."
@@ -48,13 +48,9 @@ All tests must pass. They use fakes (`FakeMealie`, `PlanMealie`, `CleanupMealie`
 
 ## Deploying
 
-Deployment is done by the owner from a clone on their PC, which also holds the real `.env`:
+Merging to `main` runs the tests and, if they pass, GitHub Actions builds and publishes `ghcr.io/crimson3076/grocer:latest` (`.github/workflows/image.yml`). The Unraid server pulls that image; it is never built on the server. Updating is the Docker tab's "Apply update", or `bash deploy.sh` (pull and recreate over SSH).
 
-```bash
-bash deploy.sh            # tars the folder to NODE2 over SSH, builds the image, restarts the container
-```
-
-The container keeps its data in `/mnt/user/appdata/grocer` (SQLite, Chrome profile, image caches), so rebuilding never loses state. Database changes must be additive (new tables or columns created on startup), never destructive.
+Everything stateful lives in the `/data` volume (`/mnt/user/appdata/grocer`): `grocer.env` with the settings and tokens (read by `entrypoint.sh` at startup), the SQLite database, the Chrome profile and caches. Deleting the container loses nothing. Database changes must be additive (new tables or columns created on startup), never destructive. A new setting needs a sensible default in `config.py` and a line in `.env.example`.
 
 ## Making changes
 

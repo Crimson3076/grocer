@@ -3,6 +3,20 @@
 set -euo pipefail
 export DISPLAY=:99
 mkdir -p "${DATA_DIR:-/data}"
+
+# Settings and tokens live with the data (/data/grocer.env), so the container can be deleted and
+# re-pulled freely. Plain KEY=value lines; values are taken literally (no shell expansion).
+# Anything set on the container itself (docker -e, Unraid template) wins over the file.
+ENV_FILE="${GROCER_ENV_FILE:-${DATA_DIR:-/data}/grocer.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    key="${line%%=*}"; key="${key//[[:space:]]/}"; val="${line#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -z "${!key+x}" ]] && export "$key=$val"
+  done < "$ENV_FILE"
+fi
 # a container restart can leave Chrome's profile lock behind
 rm -f "${DATA_DIR:-/data}"/browser-profile/Singleton* 2>/dev/null || true
 

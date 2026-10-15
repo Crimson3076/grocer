@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>grocer</Name>
+  <Repository>ghcr.io/crimson3076/grocer:latest</Repository>
+  <Registry>https://github.com/Crimson3076/grocer/pkgs/container/grocer</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Crimson3076/grocer/issues</Support>
+  <Project>https://github.com/Crimson3076/grocer</Project>
+  <Overview>Turns Mealie dinners into a filled Walmart cart from your local store, with pantry estimates. Settings and tokens go in grocer.env inside the appdata folder (copy .env.example from the repo). Keep both ports on the LAN only.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8790]/</WebUI>
+  <ExtraParams>--shm-size=1g</ExtraParams>
+  <Config Name="App" Target="8790" Default="8790" Mode="tcp" Description="Grocer pages and API (LAN only)" Type="Port" Display="always" Required="true" Mask="false">8790</Config>
+  <Config Name="Browser view" Target="6080" Default="6080" Mode="tcp" Description="noVNC view of the app's browser, for Walmart sign-in and robot checks (LAN only)" Type="Port" Display="always" Required="true" Mask="false">6080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/grocer" Mode="rw" Description="Database, Walmart browser profile, image cache and grocer.env (settings and tokens)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/grocer</Config>
+</Container>

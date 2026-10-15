@@ -1,13 +1,12 @@
 services:
   grocer:
-    build: .
-    image: grocer:latest
+    image: ghcr.io/crimson3076/grocer:latest
+    # build: .          # use this instead to run your local changes
     container_name: grocer
     restart: unless-stopped
-    env_file: .env
     ports:
-      - "8790:8790"   # review page + API (LAN only, do not proxy publicly)
-      - "6080:6080"   # browser view for Walmart sign-in / CAPTCHAs (LAN only)
+      - "8790:8790"   # pages + API (LAN only, do not proxy publicly)
+      - "6080:6080"   # browser view for Walmart sign-in / robot checks (LAN only)
     volumes:
-      - /mnt/user/appdata/grocer:/data
+      - /mnt/user/appdata/grocer:/data   # put your settings in grocer.env here
     shm_size: "1gb"   # Chrome needs more than Docker's 64 MB default
