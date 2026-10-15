@@ -31,6 +31,43 @@ Walmart browsing is paced automatically: the app learns how fast it can go, slow
 
 Data lives in `/data` in the container (`/mnt/user/appdata/grocer` on NODE2): the SQLite database, the Chrome profile and image caches. Rebuilding keeps it. New tables and columns are added on startup.
 
+## Unraid with the published image
+
+GitHub Actions tests and publishes an Intel/AMD 64-bit image on every push to
+`main`: `ghcr.io/crimson3076/grocer:latest`. Each build also has a tag containing
+the full commit SHA for rollback. The image is private by default.
+
+Before pulling a private image, create a GitHub personal access token (classic)
+with `read:packages`, then run in the Unraid terminal:
+
+```bash
+docker login ghcr.io -u Crimson3076
+```
+
+Paste the token at the password prompt. Do not put it in the container's
+environment variables. See GitHub's [Container registry authentication guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+
+In Unraid's Docker tab, choose **Add Container** and set:
+
+| Field | Value |
+| --- | --- |
+| Name | `grocer` |
+| Repository | `ghcr.io/crimson3076/grocer:latest` |
+| Network type | `bridge` |
+| WebUI (Advanced View) | `http://[IP]:[PORT:8790]/` |
+| Extra Parameters (Advanced View) | `--shm-size=1g` |
+| Port (TCP) | Host `8790`, container `8790` |
+| Port (TCP) | Host `6080`, container `6080` |
+| Path | Host `/mnt/user/appdata/grocer`, container `/data`, read/write |
+
+Add environment variables from `.env.example`, including your existing tokens
+and service URLs. Keep the existing appdata folder to preserve the database and
+Walmart sign-in. Stop the old Grocer container before applying the new one so
+they do not share ports or the Chrome profile at the same time. Keep both ports
+on the LAN. Use Unraid's image update control after a new build finishes.
+
+For local source builds, the existing Compose and `deploy.sh` options still work.
+
 ## Schedule
 
 | When (local time) | What |
