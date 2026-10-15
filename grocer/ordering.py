@@ -2,9 +2,29 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from .cart import deficits, plan_line, targets
 from .db import now_iso
+
+
+def cached_availability(db, iid, locally_available, minutes, settings):
+    """Only actual, recent observations count, never a pick edit timestamp."""
+    now = datetime.now(timezone.utc)
+    for row in db.all("SELECT * FROM picks WHERE item_id=? ORDER BY availability_checked_at DESC", str(iid)):
+        pick = dict(row)
+        if (str(pick.get("store_id") or "") != settings["store_id"]
+                or pick.get("fulfillment") != settings["fulfillment"]):
+            continue
+        try:
+            checked = datetime.fromisoformat(pick.get("availability_checked_at") or "")
+            age = (now - checked).total_seconds()
+        except (TypeError, ValueError):
+            return None
+        if locally_available(pick) and 0 <= age < minutes * 60 and checked.date() == now.date():
+            return pick
+        return None
+    return None
 
 
 def fill(force: bool = False) -> dict:
@@ -38,7 +58,23 @@ def fill(force: bool = False) -> dict:
         def live_item(iid):
             iid = str(iid)
             if iid not in checked:
-                checked[iid] = j.browser.item(iid)
+                cached = None if run else cached_availability(
+                    j.db, iid, j.locally_available, j.CONFIG.cart_availability_minutes, j.walmart_settings())
+                if cached:
+                    checked[iid] = cached
+                    j.log.info("Cart availability: reusing recent store check for %s", iid)
+                else:
+                    checked[iid] = j.browser.item(iid)
+                    live = checked[iid]
+                    # Refresh only actual observations; a retry never uses this cache.
+                    if live:
+                        j.db.run("""UPDATE picks SET local_available=?, store_id=?, fulfillment=?,
+                                    local_reason=?, availability_checked_at=? WHERE item_id=?""",
+                                 int(bool(live.get("local_available"))), live.get("store_id"),
+                                 live.get("fulfillment"), live.get("local_reason"),
+                                 live.get("availability_checked_at"), iid)
+                    else:
+                        j.db.run("UPDATE picks SET local_available=0, availability_checked_at=NULL WHERE item_id=?", iid)
             return checked[iid]
 
         if run:
@@ -97,14 +133,15 @@ def fill(force: bool = False) -> dict:
             # Commit intent before any browser navigation that could mutate the cart.
             j.db.save_cart_run(week, review_id, "adding", plan)
         fresh = not run
-        current = j.browser.cart_contents()
+        if not fresh:
+            current = j.browser.cart_contents()
         if current is None:
             if not fresh:
                 raise RuntimeError("Some items may already be in your cart, and the cart couldn't be read to check. "
                                    "Look at the Walmart cart and add anything missing by hand.")
             current = {}
         remaining = deficits(plan["targets"], current)
-        # Reuse checks from this fill, but never a previous run's availability.
+        # Reuse recent observations on new fills; retries always check live.
         # A retry keeps its saved quantities and refuses unavailable products.
         for iid, _ in remaining:
             if not j.locally_available(live_item(iid)):
@@ -167,7 +204,8 @@ def fill(force: bool = False) -> dict:
 
 
 def confirm_checkout(quantities: dict[str, int] | None = None, manual_keys: list[str] | None = None) -> None:
-    from . import jobs as j, pantry
+    from . import jobs as j
+    from . import pantry
     from .trips import coverage
 
     with j.db.tx() as c:

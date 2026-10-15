@@ -17,6 +17,8 @@ Every page shows the same three steps at the top:
 
 Everything else (Walmart sign-in, order history, store, browsing speed, pantry, merging duplicate ingredients, cleaning up Mealie, emptying the cart, starting over) is on **Settings**.
 
+New cart fills reuse verified availability for the same product, store, and method for up to one hour, reducing repeat product-page visits. Old records are checked live once after upgrading. Retries check missing products live, and every fill reads back the cart quantities. Set `CART_AVAILABILITY_MINUTES=0` in `grocer.env` to always check live, or choose a shorter window up to 60 minutes. Availability can still change before checkout.
+
 Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
 
 ## Setup
@@ -110,7 +112,7 @@ Keep ports 8790 (app) and 6080 (browser view) on the LAN or a VPN. Neither has a
 
 ## Limits
 
-- Walmart has no public inventory API; the app reads the pages a shopper sees. A Walmart layout change can need an update in `grocer/walmart.py` or `grocer/availability.py`.
+- Grocer currently reads Walmart pages rather than using a credentialed inventory API. A Walmart layout change can need an update in `grocer/walmart.py` or `grocer/availability.py`.
 - Availability can change between the check and checkout.
 - Pantry stock is an estimate. Purchases add the quantities you confirm, while cooking consumes reserved ingredients. Recipes and package conversions can still need a correction.
 - Shared or manually changed Walmart cart lines are left in place when undoing a fill; adjust those in Walmart.

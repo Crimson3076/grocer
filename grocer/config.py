@@ -60,6 +60,7 @@ class Config:
     # Pause between browser actions, seconds (keeps the session human paced)
     browser_delay: float = field(default_factory=lambda: float(_env("BROWSER_DELAY", "4")))
     browser_min_gap: float = field(default_factory=lambda: float(_env("BROWSER_MIN_GAP", "12")))
+    cart_availability_minutes: float = field(default_factory=lambda: max(0.0, min(60.0, float(_env("CART_AVAILABILITY_MINUTES", "60")))))
     browser_channel: str = field(default_factory=lambda: _env("BROWSER_CHANNEL", "chrome"))
     walmart_store_id: str = field(default_factory=lambda: _env("WALMART_STORE_ID", ""))
     walmart_fulfillment: str = field(default_factory=lambda: _env("WALMART_FULFILLMENT", "PICKUP").upper())

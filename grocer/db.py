@@ -161,7 +161,7 @@ class DB:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN image_url TEXT")
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(picks)")}
         for col, kind in {"local_available": "INTEGER DEFAULT 0", "store_id": "TEXT",
-                          "fulfillment": "TEXT", "local_reason": "TEXT"}.items():
+                          "fulfillment": "TEXT", "local_reason": "TEXT", "availability_checked_at": "TEXT"}.items():
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {kind}")
         self._conn.commit()
@@ -271,8 +271,9 @@ class DB:
                 p.get("size_qty"), p.get("size_dim"), p.get("sales_unit"), int(approved), now_iso(), source,
                 p.get("image") or p.get("image_url") or self.image_for(str(p["item_id"])),
             )
-            self.run("UPDATE picks SET local_available=?, store_id=?, fulfillment=?, local_reason=? WHERE key=?",
-                     int(bool(p.get("local_available"))), p.get("store_id"), p.get("fulfillment"), p.get("local_reason"), key)
+            self.run("UPDATE picks SET local_available=?, store_id=?, fulfillment=?, local_reason=?, availability_checked_at=? WHERE key=?",
+                     int(bool(p.get("local_available"))), p.get("store_id"), p.get("fulfillment"), p.get("local_reason"),
+                     p.get("availability_checked_at"), key)
             stock = self.stock(key)
             if stock and stock['packages'] is not None:
                 self.run('UPDATE stock SET packages=? WHERE key=?', stock['packages'], key)

@@ -255,8 +255,8 @@ def test_deleted_and_out_of_stock(monkeypatch):
             live["local_available"] = False
         return live
     b.item = item
-    # built Saturday, filled Sunday: picks are older than the 12-hour "just checked" window
-    jobs.db.run("UPDATE picks SET updated = '2020-01-01T00:00:00+00:00'")
+    # Built earlier: availability observations have expired.
+    jobs.db.run("UPDATE picks SET updated = '2020-01-01T00:00:00+00:00', availability_checked_at = '2020-01-01T00:00:00+00:00'")
 
     res = c.post("/api/cart?force=true&wait=true").json()
     assert any(s.startswith("butter ->") for s in res["swaps"])

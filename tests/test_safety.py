@@ -91,11 +91,12 @@ def test_search_never_promotes_unverified_results():
     assert w._search("milk") == []
 
 
-def test_recent_saved_pick_is_rechecked_before_cart_add(household):
+def test_legacy_saved_pick_is_rechecked_before_cart_add(household):
     c, browser, db = household
     build(c)
     iid = db.pick("corn tortilla")["item_id"]
     assert jobs.recently_checked("corn tortilla", 7 * 24)
+    db.run("UPDATE picks SET availability_checked_at=NULL")
     original = browser.item
     checked = []
 
@@ -540,3 +541,93 @@ def test_clear_everything_and_nothing_to_clear(household):
     last = c.post("/api/cart/clear?wait=true", json={"scope": "all"}).json()
     assert last["state"] == "done" and browser.carted == []
     assert c.post("/api/cart/clear", json={"scope": "bogus"}).status_code == 422
+
+
+def test_new_fill_reuses_verified_products_and_reads_cart_twice(household):
+    c, browser, db = household
+    build(c)
+    calls = []
+    original = browser.cart_contents
+    browser.cart_contents = lambda: (calls.append("cart") or original())
+    browser.item = lambda iid: pytest.fail("Recent verified product was reopened")
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert "failed" not in result
+    assert result["added"] > 0
+    assert calls == ["cart", "cart"]
+
+
+@pytest.mark.parametrize("stamp,store,method,available", [
+    ("old", "1234", "PICKUP", True),
+    ("future", "1234", "PICKUP", True),
+    (None, "1234", "PICKUP", True),
+    ("bad", "1234", "PICKUP", True),
+    ("now", "9999", "PICKUP", True),
+    ("now", "1234", "DELIVERY", True),
+    ("now", "1234", "PICKUP", False),
+])
+def test_cart_cache_rejects_invalid_observations(household, stamp, store, method, available):
+    from datetime import datetime, timedelta, timezone
+
+    from grocer.ordering import cached_availability
+    _, _, db = household
+    now = datetime.now(timezone.utc)
+    stamps = {"old": (now - timedelta(hours=2)).isoformat(),
+              "future": (now + timedelta(minutes=5)).isoformat(), "now": now.isoformat()}
+    db.save_pick("milk", {"item_id": "7", "local_available": available, "store_id": store,
+                          "fulfillment": method, "availability_checked_at": stamps.get(stamp, stamp)}, True)
+    assert cached_availability(db, "7", jobs.locally_available, 60, jobs.walmart_settings()) is None
+
+
+def test_saving_a_cached_pick_does_not_extend_availability(household):
+    from grocer.ordering import cached_availability
+    _, browser, db = household
+    p = browser._listing("Milk", "7")
+    p["availability_checked_at"] = "2020-01-01T00:00:00+00:00"
+    db.save_pick("milk", p, False)
+    db.save_pick("milk", dict(db.pick("milk")), True)
+    assert cached_availability(db, "7", jobs.locally_available, 60, jobs.walmart_settings()) is None
+
+
+def test_cart_cache_can_be_disabled(household, monkeypatch):
+    c, browser, _ = household
+    build(c)
+    monkeypatch.setattr(jobs.CONFIG, "cart_availability_minutes", 0)
+    checked = []
+    original = browser.item
+    browser.item = lambda iid: (checked.append(iid) or original(iid))
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert "failed" not in result
+    assert checked
+    assert len(checked) == len(set(checked))
+
+
+def test_49_verified_items_need_no_product_page_visits(household):
+    from copy import deepcopy
+    c, browser, db = household
+    build(c)
+    row = db.latest_review()
+    data = json.loads(row["data"])
+    template = next(i for i in data["items"] if i["status"] == "buy")
+    data["items"] = []
+    for n in range(49):
+        item = deepcopy(template)
+        item["key"] = f"grocery {n}"
+        item["pick"] = browser._listing("Milk, 1 gallon", str(90000 + n))
+        db.save_pick(item["key"], item["pick"], True)
+        data["items"].append(item)
+    db.update_review(row["id"], data=data)
+    browser.item = lambda iid: pytest.fail("Verified product was reopened")
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert result["added"] == 49
+    assert len(browser.cart_item_ids()) == 49
+
+
+def test_bulk_add_49_items_uses_three_requests():
+    from grocer.walmart import WalmartBrowser
+    browser = object.__new__(WalmartBrowser)
+    urls = []
+    browser._goto = urls.append
+    browser._pause = lambda factor: None
+    browser.add_to_cart([(str(n), 1) for n in range(49)])
+    assert len(urls) == 3
+    assert [len(u.split("items=")[1].split(",")) for u in urls] == [20, 20, 9]

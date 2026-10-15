@@ -16,6 +16,7 @@ from urllib.parse import quote_plus
 from . import units
 from .availability import cart_quantities, describe_keys, local_stock, selected_store
 from .availability import fulfillment as get_fulfillment
+from .db import now_iso
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ def listing_from_node(n: dict, store_id: str = "", fulfillment: str = "PICKUP", 
         "size_dim": size.dim if size else None,
         "image": _image(n),
         "local_available": local,
+        "availability_checked_at": now_iso(),
         "local_reason": reason,
         "when": ff["when"] if local else None,
         "method": ff["method"] if local else None,
