@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Groceries</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6; --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 14px 16px 120px; }
+  h1 { font-size: 22px; margin: 2px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+  a { color: inherit; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .small { font-size: 13px; color: var(--muted); }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 7px 14px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.primary, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.big, .btn.big { font-size: 17px; padding: 12px 22px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .link { background: none; border: none; padding: 4px 2px; color: var(--muted); text-decoration: underline; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .grow { flex: 1; min-width: 0; }
+  .name { font-weight: 600; }
+  .name::first-letter { text-transform: uppercase; }
+  .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb { width: 52px; height: 52px; flex: none; border-radius: 10px; background: #fff; object-fit: contain; border: 1px solid var(--line); }
+  .thumb.empty { display: grid; place-items: center; background: var(--chip); color: var(--muted); font-size: 22px; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 14px; padding: 12px 14px; margin: 10px 0; font-size: 15px; }
+  .note .btn, .note button { margin-top: 8px; }
+  .good { background: var(--ok-bg); color: var(--accent); }
+  /* the question card */
+  .ask { border: 2px solid var(--accent); }
+  .ask .q { font-size: 19px; font-weight: 600; margin: 4px 0 2px; }
+  .ask .answers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+  .ask .answers button { padding: 14px 6px; font-size: 16px; border-radius: 14px; }
+  .ask .answers.four { grid-template-columns: repeat(4, 1fr); }
+  .counter { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  /* collapsible sections */
+  details.sec { background: var(--card); border: 1px solid var(--line); border-radius: 16px; margin-bottom: 10px; }
+  details.sec > summary { list-style: none; cursor: pointer; padding: 14px; display: flex; align-items: center; gap: 10px; }
+  details.sec > summary::-webkit-details-marker { display: none; }
+  details.sec > summary::after { content: "›"; font-size: 22px; color: var(--muted); transition: transform .15s; }
+  details.sec[open] > summary::after { transform: rotate(90deg); }
+  details.sec .in { padding: 0 14px 10px; }
+  .aisle { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 4px; }
+  .line { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .line:first-of-type { border-top: none; }
+  .line .thumb { width: 42px; height: 42px; }
+  .qtyb { font-weight: 700; font-size: 14px; color: var(--muted); }
+  /* the sent screen */
+  .done { text-align: center; padding: 26px 18px; }
+  .done .big-n { font-size: 30px; font-weight: 700; margin: 6px 0 2px; }
+  /* bottom bar */
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); z-index: 10; }
+  .bar .in { max-width: 680px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+  .bar .total { font-size: 20px; font-weight: 700; }
+  /* the Change sheet */
+  dialog { border: none; border-radius: 20px; padding: 0; width: min(560px, calc(100vw - 20px)); max-height: 88vh;
+    background: var(--card); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  .sh { padding: 16px 16px 10px; border-bottom: 1px solid var(--line); }
+  .sb { padding: 6px 16px 18px; overflow: auto; max-height: calc(88vh - 90px); }
+  .opt { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .opt:first-of-type { border-top: none; }
+  .stepper { display: inline-flex; align-items: center; gap: 10px; }
+  .stepper button { width: 38px; height: 38px; padding: 0; border-radius: 50%; font-size: 18px; }
+  input[type=search], input[type=text] { font: inherit; width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); }
+  .toggle { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .toggle input { width: 22px; height: 22px; accent-color: var(--accent); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-right: 4px;
+    background: var(--chip); color: var(--muted); vertical-align: 1px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--accent); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  a.plain { text-decoration: none; }
+  a.plain:hover { text-decoration: underline; }
+  .toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 9px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main id="app"><div class="sub">Loading…</div></main>
+<div class="bar" id="bar" hidden><div class="in">
+  <div class="grow"><div class="total" id="total"></div><div class="small" id="count"></div></div>
+  <button class="primary big" id="send">Send to Walmart</button>
+</div></div>
+
+<dialog id="sheet">
+  <div class="sh"><div class="row"><div class="grow"><div class="name" id="s-title"></div><div class="small" id="s-need"></div></div>
+    <button onclick="closeSheet()">Done</button></div></div>
+  <div class="sb" id="s-body"></div>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = s => esc(JSON.stringify(s));
+const money = n => n == null ? "" : "$" + Number(n).toFixed(2);
+const day = d => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+const AISLE = { meat: "Meat", seafood: "Seafood", produce: "Produce", dairy: "Dairy & eggs", bakery: "Bread",
+  frozen: "Frozen", pantry: "Pantry", condiment: "Sauces", spice: "Spices", oil: "Oils", other: "Other" };
+const ORDER = Object.keys(AISLE);
+let R = null, Settings = null, building = false;
+
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 3500); }
+async function api(path, body) {
+  document.documentElement.classList.add("loading");
+  try {
+    const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j;
+  } catch (e) { toast("Didn't work: " + e.message); throw e; }
+  finally { document.documentElement.classList.remove("loading"); }
+}
+async function act(path, body, msg) { await api(path, body); if (msg) toast(msg); await load(); }
+async function load() { [R, Settings] = await Promise.all([api("/api/review"), api("/api/settings")]); render(); }
+
+const imgSrc = (p, size) => {
+  const pic = p.image || p.image_url;
+  const q = [size ? "size=" + size : "", pic ? "src=" + encodeURIComponent(pic) : ""].filter(Boolean).join("&");
+  return `/img/${esc(p.item_id)}${q ? "?" + esc(q) : ""}`;
+};
+const link = p => esc(p.url || `https://www.walmart.com/ip/${p.item_id}`);
+// where it comes from: your store (pickup/delivery) or shipped
+function where(p) {
+  const r = (p && p.local_reason) || "", store = Settings?.walmart?.store_id;
+  if (/^(Pickup|Delivery)/.test(r)) return `<span class="tag ok">At your store${store ? " #" + esc(store) : ""}</span>${esc(r)}`;
+  if (/^Shipping/.test(r)) return `<span class="tag warn">Ships, not from your store</span>${esc(r.replace(/^Shipping,?\s*/, ""))}`;
+  if (r) return `<span class="tag">Store not confirmed</span>`;
+  return "";
+}
+const title = p => `<a class="plain" href="${link(p)}" target="_blank" rel="noopener">${esc(p.title)}</a>`;
+const thumb = p => p ? `<img class="thumb" loading="lazy" alt="" src="${imgSrc(p)}" data-big="${imgSrc(p, "large")}"
+  data-caption="${esc(p.title || "")}" onerror="this.outerHTML='<div class=&quot;thumb empty&quot;>🛒</div>'">` : `<div class="thumb empty">?</div>`;
+const forWhat = i => (i.sources || []).filter(s => s !== "Restock").join(", ") || "your restock list";
+
+// ------------------------------------------------------------------ the page
+function render() {
+  const app = $("#app"), bar = $("#bar");
+  if (R.status === "none" || !R.items) {
+    app.innerHTML = steps(2) + `<div class="card done"><div class="big-n">No list yet</div>
+      <p class="sub">Pick the dinners you want to shop for first.</p><a class="btn primary big" href="/dinners">Choose dinners</a></div>`;
+    bar.hidden = true; return;
+  }
+  const sent = ["carted", "partial", "checked_out"].includes(R.status) || (R.status === "failed" && R.cart_result);
+  if (sent) return renderSent();
+  if (location.hash === "#send") history.replaceState(null, "", "/review");
+
+  const items = R.items;
+  const buy = items.filter(i => i.status === "buy");
+  const qs = [...R.meals.filter(m => m.yield_question).map(m => ({ kind: "yield", m })),
+              ...items.filter(i => i.status === "check").map(i => ({ kind: "stock", i }))];
+  const missing = items.filter(i => i.status === "nopick");
+  const fresh = buy.filter(i => i.new_pick);
+  const have = items.filter(i => ["covered", "staple", "skip"].includes(i.status));
+  const picked = Settings.selected_meals;
+  const stale = picked && JSON.stringify(picked) !== JSON.stringify(R.meal_keys || []);
+
+  let h = steps(2) + `<h1>Check the list</h1>
+    <div class="sub">${R.meals.length} dinner${R.meals.length === 1 ? "" : "s"}, ${day(R.week_start)} to ${day(R.week_end || R.week_start)}</div>`;
+
+  if (building) h += `<div class="note good">Getting your list ready. This can take a few minutes because it goes slowly on
+    Walmart's site. You can leave this page; you'll get a notification when it's done.</div>`;
+  if (!R.login_ok) h += `<div class="note">Walmart signed you out. <a class="btn" href="/signin" target="_blank">Sign in to Walmart</a></div>`;
+  if (R.blocked) h += `<div class="note">Walmart asked for a robot check, so some items weren't looked up.
+    <a class="btn" href="${esc(R.vnc_url)}" target="_blank">Open the browser</a> and press and hold the button, then <button onclick="rebuild()">Try again</button></div>`;
+
+  // ---- needs you
+  const now0 = new Date(), today0 = new Date(now0.getTime() - now0.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const needCount = qs.length + missing.length + fresh.length + (stale || R.meals.some(m => m.date < today0) ? 1 : 0);
+  if (needCount) h += `<h2>Needs you (${needCount})</h2>`;
+  const now = new Date(), todayIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const passed = R.meals.filter(m => m.date < todayIso);
+  if (passed.length) h += `<div class="note">${passed.length === 1 ? `${esc(passed[0].name)} (${day(passed[0].date)}) has` : `${passed.length} of these dinners have`} already passed. <button class="primary" onclick="rebuild()">Update the list</button></div>`;
+  else if (stale) h += `<div class="note">You changed the dinners since this list was made. <button class="primary" onclick="rebuild()">Update the list</button></div>`;
+  if (!R.meals.length && !stale) h += `<div class="note">No dinners picked yet. <a class="btn primary" href="/dinners">Choose dinners</a></div>`;
+  if (qs.length) h += question(qs[0], qs.length);
+  for (const i of missing) h += `<div class="card row">${thumb(null)}<div class="grow">
+      <div class="name">${esc(i.key)}</div><div class="small">Not found at Walmart for today or tomorrow · for ${esc(forWhat(i))}</div></div>
+      <button class="primary" onclick="openSheet(${J(i.key)})">Find it</button></div>`;
+  if (fresh.length) {
+    h += `<div class="card"><div class="row"><div class="grow"><div class="name">New products to check (${fresh.length})</div>
+        <div class="small">The app found these. Tap ✓ if it's right, or Change.</div></div>
+        ${fresh.length > 1 ? `<button class="primary" onclick="confirmAll()">All look right</button>` : ""}</div>`;
+    for (const i of fresh) h += `<div class="line">${thumb(i.pick)}<div class="grow">
+        <div class="name">${esc(i.key)}</div><div class="small clip">${title(i.pick)}</div>
+        <div class="small">${money(i.pick.price)}${i.qty > 1 ? ` · ×${i.qty}` : ""} ${where(i.pick)}</div></div>
+        <button aria-label="Looks right" title="Looks right" onclick="act('/api/confirm-pick',{key:${J(i.key)}})">✓</button>
+        <button class="link" onclick="openSheet(${J(i.key)})">Change</button></div>`;
+    h += `</div>`;
+  }
+  if (!needCount && R.meals.length && !building) h += `<div class="note good">Nothing needs you. Check the cart below if you like, then tap Send to Walmart.</div>`;
+
+  // ---- going in the cart
+  const groups = {};
+  for (const i of buy) (groups[i.category] ||= []).push(i);
+  const total = R.summary.total;
+  h += `<details class="sec" ${needCount ? "" : "open"}><summary><div class="grow"><div class="name">Going in the cart (${buy.length})</div>
+      <div class="small">About ${money(total)}${R.summary.unknown_prices?.length ? " plus a few without a price" : ""}</div></div></summary><div class="in">`;
+  if (!buy.length) h += `<div class="small" style="padding:6px 0">Nothing yet.</div>`;
+  for (const cat of ORDER.filter(c => groups[c]).concat(Object.keys(groups).filter(c => !ORDER.includes(c)))) {
+    h += `<div class="aisle">${esc(AISLE[cat] || cat)}</div>`;
+    for (const i of groups[cat]) h += `<div class="line">${thumb(i.pick)}<div class="grow">
+        <div class="name">${esc(i.key)}</div><div class="small clip">${i.pick ? title(i.pick) : ""}</div>
+        ${i.pick && !/^(Pickup|Delivery)/.test(i.pick.local_reason || "") ? `<div class="small">${where(i.pick)}</div>` : ""}</div>
+        <div style="text-align:right"><div class="qtyb">${i.qty > 1 ? "×" + i.qty : ""} ${money((i.pick?.price || 0) * i.qty)}</div>
+        <button class="link" onclick="openSheet(${J(i.key)})">Change</button></div></div>`;
+  }
+  h += `</div></details>`;
+
+  // ---- already have
+  if (have.length) {
+    h += `<details class="sec"><summary><div class="grow"><div class="name">Already have (${have.length})</div>
+        <div class="small">Not buying these this time</div></div></summary><div class="in">`;
+    for (const i of have) h += `<div class="line"><div class="grow"><div class="name">${esc(i.key)}</div>
+        <div class="small">${i.status === "skip" ? "You said not this week" : i.status === "staple" ? "We always have this" : "Enough at home"}</div></div>
+        ${i.status === "skip" ? `<button onclick="act('/api/skip',{key:${J(i.key)},skip:false},'Back on the list')">Buy it</button>`
+          : `<button onclick="act('/api/stock',{food:${J(i.key)},level:'out'},'Added to the cart')">We're out</button>`}</div>`;
+    h += `</div></details>`;
+  }
+  if (R.unparsed?.length) h += `<details class="sec"><summary><div class="grow"><div class="name">Recipe lines it couldn't read (${R.unparsed.length})</div>
+      <div class="small">Add these by hand in Walmart if you need them</div></div></summary><div class="in small">${R.unparsed.map(esc).join("<br>")}</div></details>`;
+
+  h += `<div style="text-align:center;margin-top:18px">
+      ${R.status === "approved" ? `<div class="small">Approved. It'll go into your Walmart cart Sunday morning, or tap Send now.</div>`
+        : `<button class="link" onclick="act('/api/approve',{},'It will go in the cart Sunday morning')">Or put it in the cart automatically Sunday morning</button>`}</div>`;
+  app.innerHTML = h;
+
+  bar.hidden = false;
+  $("#total").textContent = "About " + money(total);
+  $("#count").textContent = `${buy.length} item${buy.length === 1 ? "" : "s"}` + (qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"} left` : "");
+  const s = $("#send");
+  s.textContent = "Send to Walmart"; s.disabled = building || !buy.length;
+  s.onclick = () => send(qs.length + missing.length);
+  if (location.hash === "#send") s.focus();
+}
+
+function question(q, n) {
+  const head = `<div class="counter">Question 1 of ${n}</div>`;
+  if (q.kind === "yield") return `<div class="card ask">${head}
+      <div class="q">How many people does ${esc(q.m.name)} feed?</div>
+      <div class="small">The recipe doesn't say clearly. You'll only be asked once.</div>
+      <div class="answers four">${[2, 4, 6, 8].map(n => `<button onclick="act('/api/yield',{recipe_id:${J(q.m.recipe_id)},servings:${n}})">${n}</button>`).join("")}</div></div>`;
+  const i = q.i;
+  return `<div class="card ask">${head}
+    <div class="q">How much ${esc(i.key)} do you have?</div>
+    <div class="small">For ${esc(forWhat(i))}</div>
+    <div class="answers">
+      <button onclick="act('/api/stock',{food:${J(i.key)},level:'high'})">Plenty</button>
+      <button onclick="act('/api/stock',{food:${J(i.key)},level:'low'})">Running low</button>
+      <button onclick="act('/api/stock',{food:${J(i.key)},level:'out'})">Out</button></div>
+    <div style="text-align:center;margin-top:8px"><button class="link" onclick="act('/api/skip',{key:${J(i.key)}},'Skipped')">Don't need it this time</button></div></div>`;
+}
+
+// ------------------------------------------------------------------ after sending
+function renderSent() {
+  const app = $("#app"), bar = $("#bar"), r = R.cart_result || {};
+  bar.hidden = true;
+  const lines = r.lines || [];
+  const problems = [...(r.carried || []), ...(r.unanswered || []), ...(r.no_pick || [])];
+  const missingIds = r.missing || [];
+  let h = steps(R.status === "checked_out" ? 4 : 3);
+  if (R.status === "checked_out") {
+    h += `<div class="card done"><div style="font-size:40px">🎉</div><div class="big-n">All done</div>
+      <p class="sub">Checkout recorded and pantry updated. The next order starts with the dinners after these.</p>
+      <a class="btn primary big" href="/dinners">Plan the next order</a></div>`;
+  } else if (R.status === "failed") {
+    h += `<div class="card done"><div class="big-n">Didn't make it to Walmart</div>
+      <p class="sub">${esc(r.error || "Something went wrong filling the cart.")}</p>
+      <button class="primary big" onclick="startJob('/api/send')">Try again</button></div>`;
+  } else {
+    h += `<div class="card done"><div style="font-size:40px">🛒</div>
+      <div class="big-n">${r.added ?? lines.length} items · about ${money(r.estimated_total)}</div>
+      <div class="sub">are in your Walmart cart</div>
+      <p><a class="btn primary big" href="https://www.walmart.com/cart" target="_blank">Open Walmart to check out</a></p>
+      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}You'll get a notification once it sees you've checked out.</div>
+      <button class="link" onclick="checkedOut()">I already checked out</button>
+      <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Take it back out of the cart</summary>
+        <div class="actions" style="justify-content:center">
+          <button onclick="clearCart('ours')">Only what the app added</button>
+          <button onclick="clearCart('all')">Everything in the cart</button></div></details></div>`;
+  }
+  if (problems.length || missingIds.length) {
+    h += `<h2>Didn't go in the cart</h2><div class="card">`;
+    for (const k of problems) h += `<div class="line"><div class="grow"><div class="name">${esc(k)}</div><div class="small">Add it by hand in Walmart if you need it</div></div></div>`;
+    for (const id of missingIds) { const l = lines.find(x => String(x.pick.item_id) === String(id));
+      h += `<div class="line">${thumb(l?.pick)}<div class="grow"><div class="name">${esc(l?.key || id)}</div><div class="small">Walmart didn't take it</div></div></div>`; }
+    if (missingIds.length && R.status !== "checked_out") h += `<div class="actions"><button onclick="startJob('/api/send')">Try those again</button></div>`;
+    h += `</div>`;
+  }
+  if (r.swaps?.length) h += `<h2>Swapped</h2><div class="card small">${r.swaps.map(esc).join("<br>")}</div>`;
+  if (lines.length) {
+    h += `<details class="sec"><summary><div class="grow"><div class="name">What was sent (${lines.length})</div></div></summary><div class="in">`;
+    for (const l of lines) h += `<div class="line">${thumb(l.pick)}<div class="grow"><div class="name">${esc(l.key)}</div>
+        <div class="small clip">${title(l.pick)}</div></div><div class="qtyb">×${l.qty}</div></div>`;
+    h += `</div></details>`;
+  }
+  if (R.status !== "checked_out") h += `<div style="text-align:center;margin-top:14px"><a class="link" href="/settings">Start over with this order</a></div>`;
+  app.innerHTML = h;
+}
+
+// ------------------------------------------------------------------ the Change sheet
+let S = { key: null };
+async function openSheet(key) {
+  S.key = key;
+  const i = R.items.find(x => x.key === key);
+  $("#s-title").textContent = key[0].toUpperCase() + key.slice(1);
+  $("#s-need").textContent = `Need ${i.need_text || "some"} · for ${forWhat(i)}`;
+  $("#s-body").innerHTML = `<div class="small" style="padding:10px 0">Loading options…</div>`;
+  $("#sheet").showModal();
+  let c = { bought_before: [], alternatives: [] };
+  try { c = await api("/api/choices?key=" + encodeURIComponent(key)); } catch (e) { /* still show the rest */ }
+  const p = i.pick;
+  let h = "";
+  if (p) h += `<div class="opt">${thumb(p)}<div class="grow"><div class="small">Buying now</div><div class="clip">${title(p)}</div>
+      <div class="small">${money(p.price)} ${where(p)}</div></div>
+      <span class="stepper"><button aria-label="Fewer" onclick="qty(${i.qty - 1})">−</button><b>${i.qty}</b><button aria-label="More" onclick="qty(${i.qty + 1})">+</button></span></div>`;
+  if (c.bought_before.length) {
+    h += `<h2>You've bought before</h2>`;
+    for (const b of c.bought_before) h += `<div class="opt">${thumb(b)}<div class="grow"><div class="clip">${title(b)}</div>
+        <div class="small">${money(b.price)} <span class="tag">Store checked when you tap Use</span></div></div><button onclick="choose('/api/use-purchase',{key:S.key,item_id:${J(String(b.item_id))}})">Use</button></div>`;
+  }
+  if (c.alternatives.length) {
+    h += `<h2>Other options</h2>`;
+    for (const a of c.alternatives) h += `<div class="opt">${thumb(a)}<div class="grow"><div class="clip">${title(a)}</div>
+        <div class="small">${money(a.price)} ${where(a)}</div></div>
+        <button onclick="choose('/api/alternative',{key:S.key,index:${a.index}})">Use</button></div>`;
+  }
+  h += `<h2>Search Walmart</h2><form class="row" onsubmit="event.preventDefault(); find()"><input type="search" id="s-q" value="${esc(key)}">
+      <button class="primary">Search</button></form><div id="s-res"></div>
+    <h2>This ingredient</h2>
+    <label class="toggle"><input type="checkbox" ${c.brand_lock ? "checked" : ""} onchange="act('/api/food',{key:S.key,brand_lock:this.checked})">
+      <span class="grow">Only buy this exact product<div class="small">If it's out, leave it off instead of picking something similar</div></span></label>
+    <label class="toggle"><input type="checkbox" onchange="if(this.checked) act('/api/food',{key:S.key,staple:true},'Got it').then(closeSheet)">
+      <span class="grow">We always have this<div class="small">Stop buying it unless you say you're out</div></span></label>
+    <div class="actions"><button onclick="act('/api/skip',{key:S.key},'Not buying it this time').then(closeSheet)">Don't buy this time</button></div>`;
+  $("#s-body").innerHTML = h;
+}
+function closeSheet() { $("#sheet").close(); }
+async function qty(n) { await act("/api/qty", { key: S.key, qty: Math.max(n, 0) }); openSheet(S.key); }
+async function choose(path, body) { await act(path, body, "Changed"); closeSheet(); }
+async function find() {
+  const q = $("#s-q").value.trim(); if (!q) return;
+  $("#s-res").innerHTML = `<div class="small" style="padding:8px 0">Searching Walmart (it goes slowly on purpose)…</div>`;
+  const r = await api("/api/search?q=" + encodeURIComponent(q)).catch(() => ({ results: [] }));
+  $("#s-res").innerHTML = (r.results || []).map(x => `<div class="opt">${thumb(x)}<div class="grow"><div class="clip">${title(x)}</div>
+      <div class="small">${money(x.price)} ${where(x)}</div></div>
+      <button onclick="choose('/api/swap',{key:S.key,url:${J(x.url || String(x.item_id))}})">Use</button></div>`).join("")
+    || `<div class="small" style="padding:8px 0">Nothing you can get today or tomorrow.</div>`;
+}
+
+// ------------------------------------------------------------------ actions
+function rebuild() { startJob("/api/review/build"); }
+async function confirmAll() {
+  for (const i of R.items.filter(i => i.status === "buy" && i.new_pick)) await api("/api/confirm-pick", { key: i.key });
+  toast("Saved"); await load();
+}
+function send(unanswered) {
+  if (unanswered && !confirm(`${unanswered} thing${unanswered === 1 ? "" : "s"} still need${unanswered === 1 ? "s" : ""} you. Those won't be bought. Send the rest to Walmart?`)) return;
+  startJob("/api/send");
+}
+function clearCart(scope) {
+  const msg = scope === "all" ? "Empty your whole Walmart cart, including anything you added yourself?"
+    : "Take this order's items back out of your Walmart cart? Anything you added yourself stays.";
+  if (confirm(msg)) startJob("/api/cart/clear", { scope });
+}
+function checkedOut() { if (confirm("Mark this order as checked out? This updates what you have at home.")) act("/api/checked-out", {}, "Checkout recorded"); }
+
+window.toast = toast;
+window.onJob = job => {
+  const b = !!(job && (job.kind === "build" || job.kind === "cart"));
+  if (b !== building) { building = b; if (R) render(); }
+};
+let deferred = false;
+window.onDataChanged = () => { if (document.activeElement?.matches("input") || $("#sheet").open) { deferred = true; return; } return load(); };
+$("#sheet").addEventListener("close", () => { if (deferred) { deferred = false; load(); } });
+load().catch(() => { $("#app").innerHTML = '<h1>Groceries</h1><p>Couldn\'t load the list.</p><button onclick="load()">Try again</button>'; });
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>

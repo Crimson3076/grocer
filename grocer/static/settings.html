@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Settings</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6; --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 14px 16px 60px; }
+  h1 { font-size: 22px; margin: 2px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; }
+  a { color: inherit; }
+  .sub, .small { color: var(--muted); font-size: 14px; }
+  .small { font-size: 13px; }
+  .list { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-top: 1px solid var(--line);
+    text-decoration: none; color: inherit; background: none; border-left: 0; border-right: 0; border-bottom: 0;
+    width: 100%; text-align: left; font: inherit; cursor: pointer; }
+  .item:first-child { border-top: 0; }
+  .item:hover { background: var(--chip); }
+  .item .ic { font-size: 20px; width: 26px; text-align: center; flex: none; }
+  .item .grow { flex: 1; min-width: 0; }
+  .item .go { color: var(--muted); font-size: 20px; }
+  .item.danger { color: var(--warn); }
+  .form { padding: 14px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+  .form[hidden] { display: none; }
+  .form label { font-size: 14px; color: var(--muted); }
+  input, select { font: inherit; width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  button.primary { font: inherit; background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); border-radius: 999px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer; justify-self: start; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 9px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div id="steps"></div>
+  <h1>Settings and tools</h1>
+  <div class="sub">Things you won't need most weeks.</div>
+
+  <h2>Walmart</h2>
+  <div class="list">
+    <a class="item" href="/signin" target="_blank"><span class="ic">🔑</span><span class="grow">Sign in to Walmart
+      <div class="small">Opens the app's own browser</div></span><span class="go">›</span></a>
+    <button class="item" onclick="startJob('/api/history/sync')"><span class="ic">🧾</span><span class="grow">Read my Walmart order history
+      <div class="small">So it picks things you've bought before</div></span><span class="go">›</span></button>
+    <button class="item" onclick="document.getElementById('storeform').hidden ^= 1"><span class="ic">🏬</span><span class="grow">Store and pickup or delivery
+      <div class="small" id="storeline">Loading…</div></span><span class="go">›</span></button>
+    <div class="form" id="storeform" hidden>
+      <div class="small">Pick the same store in the Walmart browser too. Only things you can get today or tomorrow are used.</div>
+      <label>Store number<input id="store" inputmode="numeric" maxlength="6" placeholder="e.g. 3370"></label>
+      <label>How you get groceries<select id="method"><option value="DELIVERY">Delivery</option><option value="PICKUP">Pickup</option></select></label>
+      <button class="primary" onclick="saveStore()">Save</button>
+    </div>
+    <div class="item" style="cursor:default"><span class="ic">🐢</span><span class="grow">Browsing speed
+      <div class="small" id="pace">Learning…</div></span></div>
+  </div>
+
+  <h2>Ingredients</h2>
+  <div class="list">
+    <a class="item" href="/pantry"><span class="ic">🥫</span><span class="grow">What we have
+      <div class="small">Stock levels and the product each ingredient uses</div></span><span class="go">›</span></a>
+    <a class="item" href="/check"><span class="ic">🔍</span><span class="grow">Why did it pick that?
+      <div class="small">See which product an ingredient uses and why</div></span><span class="go">›</span></a>
+    <button class="item" onclick="startJob('/api/dedupe')"><span class="ic">🧹</span><span class="grow">Merge duplicate ingredients
+      <div class="small">"Cracked black pepper" and "black pepper" become one</div></span><span class="go">›</span></button>
+    <a class="item" href="/mealie-cleanup"><span class="ic">🍲</span><span class="grow">Clean up Mealie's ingredients
+      <div class="small">Merge duplicates in Mealie itself, after you review them</div></span><span class="go">›</span></a>
+  </div>
+
+  <h2>This order</h2>
+  <div class="list">
+    <button class="item" onclick="startJob('/api/review/build').then(() => location.href = '/review')"><span class="ic">🔄</span><span class="grow">Rebuild the list
+      <div class="small">Start the list again from the dinners you picked</div></span><span class="go">›</span></button>
+    <a class="item" id="vnc" href="#" target="_blank"><span class="ic">🖥️</span><span class="grow">Watch the app's browser
+      <div class="small">Also where you solve a Walmart robot check</div></span><span class="go">›</span></a>
+    <button class="item" onclick="document.getElementById('clearform').hidden ^= 1"><span class="ic">🧺</span><span class="grow">Empty the Walmart cart
+      <div class="small">Take things back out, without checking out</div></span><span class="go">›</span></button>
+    <div class="form" id="clearform" hidden>
+      <div class="small">The app opens your cart and taps Remove on each item. It goes slowly so Walmart doesn't flag it.</div>
+      <button class="primary" onclick="clearCart('ours')">Only what the app added</button>
+      <button class="primary" style="background:var(--warn);border-color:var(--warn)" onclick="clearCart('all')">Everything in the cart</button>
+    </div>
+    <button class="item danger" onclick="resetPlan()"><span class="ic">↩️</span><span class="grow">Start over with this order
+      <div class="small">Forgets what was sent. Items already in your Walmart cart stay there.</div></span><span class="go">›</span></button>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 3000); }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { toast("Didn't work: " + (j.detail || r.statusText)); throw new Error(j.detail); }
+  return j;
+}
+async function load() {
+  const s = await api("/api/settings");
+  const w = s.walmart || {};
+  $("#storeline").textContent = w.store_id ? `Walmart #${w.store_id} · ${w.fulfillment === "PICKUP" ? "Pickup" : "Delivery"}` : "Not set (works without it)";
+  $("#store").value = w.store_id || ""; $("#method").value = w.fulfillment || "DELIVERY";
+  $("#vnc").href = s.vnc_url || "#";
+  const p = s.pace || {};
+  if (p.min_gap) $("#pace").textContent = `Learned on its own: about ${Math.round(p.min_gap)}s between pages, up to ${p.per_hour} an hour`
+    + (p.checks_seen ? ` · ${p.checks_seen} robot check${p.checks_seen === 1 ? "" : "s"} so far` : "");
+}
+async function saveStore() {
+  const store_id = $("#store").value.trim();
+  if (!/^[0-9]{1,6}$/.test(store_id)) return toast("Enter the store number");
+  await api("/api/settings/walmart", { store_id, fulfillment: $("#method").value });
+  toast("Saved"); $("#storeform").hidden = true; load();
+}
+function clearCart(scope) {
+  const msg = scope === "all" ? "Empty your whole Walmart cart, including anything you added yourself?"
+    : "Take the app's items back out of your Walmart cart? Anything you added yourself stays.";
+  if (!confirm(msg)) return;
+  startJob("/api/cart/clear", { scope }); document.getElementById("clearform").hidden = true;
+}
+async function resetPlan() {
+  if (!confirm("Start over with this order? Items already in your Walmart cart stay there, so remove any you don't want.")) return;
+  await api("/api/cart/reset", {}); toast("Started over"); location.href = "/review";
+}
+window.toast = toast;
+window.onDataChanged = load;
+document.addEventListener("DOMContentLoaded", () => { $("#steps").innerHTML = steps(0); });
+load();
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>

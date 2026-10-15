@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clean up Mealie</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6; --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 110px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; }
+  a { color: inherit; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .links { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
+  .card.off { opacity: .55; }
+  .small { font-size: 13px; color: var(--muted); }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.primary, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .ghead { display: flex; align-items: center; gap: 10px; }
+  .ghead input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  .ghead .name { font-weight: 600; flex: 1; min-width: 0; }
+  .why { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .n { font-size: 14px; padding: 4px 10px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); cursor: pointer; }
+  .n.keep { background: var(--ok-bg); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .n.out { text-decoration: line-through; color: var(--muted); }
+  .n .x { font-weight: 400; margin-left: 6px; padding: 0 2px; color: var(--muted); text-decoration: none; display: inline-block; }
+  .help { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 12px 0; }
+  .ok { color: var(--accent); }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  .bar .in { max-width: 720px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+  .bar .grow { flex: 1; font-size: 14px; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 8px 14px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 40; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>Clean up Mealie</h1><div class="sub">Find ingredients in Mealie that are really the same thing, and merge them.</div></div>
+    <div class="links"><a class="btn" href="/settings">← Settings</a></div>
+  </div>
+  <div id="out"><div class="card sub">Loading...</div></div>
+</main>
+<div class="bar" id="bar" style="display:none"><div class="in">
+  <div class="grow" id="count"></div>
+  <button class="primary" id="apply">Merge in Mealie</button>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let P = null, LAST = null;
+// per group: { on: bool, keep: id, out: Set(ids left alone) }
+let pick = [];
+
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
+function when(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function load() {
+  try {
+    const j = await fetch("/api/mealie/cleanup", { cache: "no-store" }).then(r => r.json());
+    P = j.proposal; LAST = j.last_applied;
+    pick = (P ? P.groups : []).map(g => ({ on: true, keep: g.keep.id, out: new Set() }));
+    render();
+  } catch (e) { $("#out").innerHTML = `<div class="card">Couldn't load: ${esc(e.message)}</div>`; }
+}
+
+function members(g) { return [g.keep, ...g.same]; }
+
+function render() {
+  let h = `<div class="card row" style="justify-content:space-between">
+      <div><div>${P ? `Checked ${P.scanned} ingredients` : "Not checked yet"}</div>
+      ${P ? `<div class="small">${esc(when(P.created))}</div>` : `<div class="small">Takes a minute or two. Nothing changes until you say so.</div>`}</div>
+      <div class="row"><button ${P ? "" : 'class="primary"'} onclick="startJob('/api/mealie/cleanup/scan')">${P ? "Check again" : "Find duplicates"}</button>
+      ${P || LAST ? `<button onclick="clearAll(this)">Clear all</button>` : ""}</div></div>`;
+
+  if (LAST && (LAST.done.length || LAST.failed.length)) {
+    h += `<h2>Last cleanup</h2><div class="card">`;
+    for (const d of LAST.done) h += `<div><span class="ok">✓</span> ${esc(d.merged.join(", "))} → <b>${esc(d.keep)}</b></div>`;
+    for (const f of LAST.failed) h += `<div style="color:var(--warn)">✗ ${esc(f.name)}: ${esc(f.why)}</div>`;
+    if (!LAST.backed_up) h += `<div class="small" style="margin-top:6px">No Mealie backup was made that time (the Mealie key isn't an admin).</div>`;
+    h += `</div>`;
+  }
+
+  if (P && P.groups.length) {
+    h += `<h2>Suggested merges (${P.groups.length})</h2>
+      <div class="sub" style="margin:-4px 0 10px">Green is the name that stays. Tap another name to keep that one instead,
+      or tap × to leave a name out. Untick anything that isn't really the same.</div>`;
+    P.groups.forEach((g, i) => {
+      const s = pick[i];
+      const keepName = members(g).find(f => f.id === s.keep).name;
+      h += `<div class="card ${s.on ? "" : "off"}">
+        <label class="ghead"><input type="checkbox" ${s.on ? "checked" : ""} onchange="toggle(${i}, this.checked)">
+          <span class="name">${esc(keepName)}</span></label>
+        <div class="names">${members(g).map(f => {
+          const cls = f.id === s.keep ? "keep" : s.out.has(f.id) ? "out" : "";
+          return `<span class="n ${cls}" data-g="${i}" data-id="${esc(f.id)}">${esc(f.name)}${f.id === s.keep ? "" :
+            `<b class="x" title="${s.out.has(f.id) ? "Put back" : "Leave out"}">${s.out.has(f.id) ? "+" : "×"}</b>`}</span>`;
+        }).join("")}</div>
+        <div class="help">${esc(g.why)}</div></div>`;
+    });
+  } else if (P) {
+    h += `<div class="card sub" style="margin-top:12px">Nothing to merge. Mealie's ingredient list looks tidy.</div>`;
+  }
+  $("#out").innerHTML = h;
+  updateBar();
+}
+
+function chosen() {
+  if (!P) return [];
+  const out = [];
+  P.groups.forEach((g, i) => {
+    const s = pick[i];
+    if (!s.on) return;
+    const same = members(g).filter(f => f.id !== s.keep && !s.out.has(f.id)).map(f => f.id);
+    if (same.length) out.push({ keep: s.keep, keep_name: members(g).find(f => f.id === s.keep).name, same });
+  });
+  return out;
+}
+
+function updateBar() {
+  const c = chosen();
+  const n = c.reduce((a, g) => a + g.same.length, 0);
+  $("#bar").style.display = P && P.groups.length ? "" : "none";
+  $("#count").textContent = n ? `${n} name${n === 1 ? "" : "s"} will merge into ${c.length} ingredient${c.length === 1 ? "" : "s"}` : "Nothing selected";
+  $("#apply").disabled = !n;
+}
+
+async function clearAll(b) {
+  if (!b.dataset.armed) {   // second tap confirms, no browser popup
+    b.dataset.armed = "1"; b.textContent = "Tap to clear";
+    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "Clear all"; } }, 5000);
+    return;
+  }
+  const r = await fetch("/api/mealie/cleanup", { method: "DELETE" });
+  if (!r.ok) return toast("Didn't work");
+  toast("Cleared. Nothing in Mealie was changed.");
+  load();
+}
+
+function toggle(i, on) { pick[i].on = on; render(); }
+
+// tap a name: keep that one. tap its ×: leave it out of the merge.
+$("#out").addEventListener("click", e => {
+  const n = e.target.closest(".n"); if (!n) return;
+  const s = pick[+n.dataset.g], id = n.dataset.id;
+  if (e.target.closest(".x")) {
+    s.out.has(id) ? s.out.delete(id) : s.out.add(id);
+  } else {
+    s.keep = id; s.out.delete(id); s.on = true;
+  }
+  render();
+});
+
+$("#apply").onclick = async () => {
+  const groups = chosen();
+  const n = groups.reduce((a, g) => a + g.same.length, 0);
+  if (!n) return;
+  if (!confirmBox(n)) return;
+  try {
+    const r = await fetch("/api/mealie/cleanup/apply", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (j.job && j.job.already) toast("Already working on something, try again when it finishes");
+  } catch (e) { toast("Didn't work: " + e.message); }
+  window.pollStatus && window.pollStatus();
+};
+
+function confirmBox(n) {
+  // inline confirm on the button, no browser popup
+  const b = $("#apply");
+  if (b.dataset.armed) { delete b.dataset.armed; b.textContent = "Merge in Mealie"; return true; }
+  b.dataset.armed = "1";
+  b.textContent = `Yes, merge ${n}`;
+  toast("This changes Mealie for everyone. A Mealie backup is made first. Tap again to go ahead.");
+  setTimeout(() => { if (b.dataset.armed) { delete b.dataset.armed; b.textContent = "Merge in Mealie"; } }, 6000);
+  return false;
+}
+
+window.toast = toast;
+window.onDataChanged = load;
+load();
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>

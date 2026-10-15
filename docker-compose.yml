@@ -1,0 +1,13 @@
+services:
+  grocer:
+    build: .
+    image: grocer:latest
+    container_name: grocer
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8790:8790"   # review page + API (LAN only, do not proxy publicly)
+      - "6080:6080"   # browser view for Walmart sign-in / CAPTCHAs (LAN only)
+    volumes:
+      - /mnt/user/appdata/grocer:/data
+    shm_size: "1gb"   # Chrome needs more than Docker's 64 MB default

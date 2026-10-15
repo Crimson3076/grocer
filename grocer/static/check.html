@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Check an ingredient</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6; --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 60px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; }
+  a { color: inherit; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .links { display: flex; gap: 6px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .title { font-weight: 600; }
+  .small { font-size: 13px; color: var(--muted); }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.primary, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  input[type=search] { font: inherit; width: 100%; padding: 10px 12px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .ask { display: flex; gap: 8px; margin: 14px 0 4px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px;
+    background: var(--chip); color: var(--muted); white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--accent); }
+  .tag.no { background: var(--warn-bg); color: var(--warn); }
+  .verdict { margin-top: 4px; font-size: 14px; }
+  .verdict.ok { color: var(--accent); }
+  .verdict.no { color: var(--warn); }
+  .thumb { width: 56px; height: 56px; flex: none; border-radius: 10px; background: #fff; object-fit: contain;
+    border: 1px solid var(--line); }
+  .thumb.empty { display: grid; place-items: center; color: #9a9a9a; background: var(--chip); }
+  .lines { margin-top: 6px; font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 8px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 8px 14px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>Check an ingredient</h1><div class="sub">See which product it picks and why.</div></div>
+    <div class="links"><a class="btn" href="/settings">← Settings</a></div>
+  </div>
+  <form class="ask" id="ask">
+    <input type="search" id="q" placeholder="ketchup, bbq sauce, butter..." autocomplete="off">
+    <button class="primary">Check</button>
+  </form>
+  <div id="out"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = s => esc(JSON.stringify(s));
+const money = n => n == null ? "" : "$" + Number(n).toFixed(2);
+const SOURCE = { history: "Bought before", manual: "You chose", search: "Picked by search" };
+let R = null;
+
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2000); }
+function when(iso) {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function thumb(itemId, title) {
+  if (!itemId) return `<div class="thumb empty">·</div>`;
+  return `<img class="thumb" loading="lazy" alt="" src="/img/${esc(itemId)}" data-big="/img/${esc(itemId)}?size=large"
+    data-caption="${esc(title)}" onerror="this.outerHTML='<div class=&quot;thumb empty&quot;>·</div>'">`;
+}
+
+async function run(q) {
+  if (!q) return;
+  history.replaceState(null, "", "/check?q=" + encodeURIComponent(q));
+  $("#out").innerHTML = `<div class="card sub">Checking ${esc(q)}. Checking recipe matches and current local stock. This can take a minute.</div>`;
+  document.documentElement.classList.add("loading");
+  try {
+    const r = await fetch("/api/check?q=" + encodeURIComponent(q));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    R = j; render();
+  } catch (e) {
+    $("#out").innerHTML = `<div class="card">Couldn't check that: ${esc(e.message)}</div>`;
+  } finally { document.documentElement.classList.remove("loading"); }
+}
+
+function render() {
+  const r = R;
+  let h = `<h2>What it's called</h2><div class="card">
+      <div class="title">${esc(r.key)}${r.category ? `<span class="tag">${esc(r.category)}</span>` : ""}</div>
+      ${r.key !== r.typed.trim().toLowerCase() ? `<div class="small">You typed "${esc(r.typed)}"; recipes and picks use "${esc(r.key)}".</div>` : ""}
+      ${r.lines.length ? `<div class="lines">${[...new Set(r.lines)].map(esc).join("<br>")}</div>` : `<div class="small">Not on this week's list.</div>`}
+    </div>`;
+
+  const p = r.pick;
+  h += `<h2>Linked now</h2>` + (p ? `<div class="card row">${thumb(p.item_id, p.title)}<div class="grow">
+      <div class="title">${esc(p.title)}</div>
+      <div class="small">${SOURCE[p.source] || "Picked by search"}${p.approved ? "" : " · not confirmed yet"} · ${money(p.price)}</div></div></div>`
+    : `<div class="card sub">Nothing linked yet. The next list update picks one.</div>`);
+
+  h += `<h2>Your Walmart history</h2><div class="card row"><div class="grow">
+      <div>${r.history_count} products saved</div><div class="small">Last read ${esc(when(r.history_synced))}</div></div>
+      <button onclick="startJob('/api/history/sync')">Read it again</button></div>`;
+
+  h += `<h2>Possible matches (${r.candidates.length})</h2>`;
+  if (!r.candidates.length) {
+    h += `<div class="card sub">Nothing in your saved history has all the words in "${esc(r.key)}". If you buy it at Walmart, it may be
+      an in-store purchase that isn't on My Items, or it's named differently (see near misses below).</div>`;
+  }
+  for (const c of r.candidates) {
+    const cls = c.match === true ? "ok" : c.match === false ? "no" : "";
+    const word = c.match === true ? "Match" : c.match === false ? "Not it" : "Unsure";
+    h += `<div class="card"><div class="row">${thumb(c.item_id, c.title)}<div class="grow">
+        <div class="title">${esc(c.title)}<span class="tag ${cls}">${word}</span>${c.rejected ? '<span class="tag no">You removed this</span>' : ""}</div>
+        <div class="small">Bought ${c.seen > 1 ? c.seen + " times seen" : "before"}${c.price ? " · " + money(c.price) : ""}</div>
+        <div class="verdict ${cls}">${esc(c.reason || "")}</div></div></div>
+        <div style="margin-top:8px"><div class="small">${esc(c.local_reason)}</div><button ${c.local_available ? "" : "disabled"} onclick="usePurchase(${J(c.item_id)})">Use this one</button></div></div>`;
+  }
+
+  if (r.near.length) {
+    h += `<h2>Near misses</h2><div class="sub" style="margin:-4px 0 8px">Share some words but weren't considered.</div>`;
+    for (const n of r.near) {
+      h += `<div class="card"><div class="row">${thumb(n.item_id, n.title)}<div class="grow">
+          <div class="title">${esc(n.title)}</div><div class="small">Shares: ${esc(n.shared.join(", "))}</div></div></div>
+          <div style="margin-top:8px"><div class="small">${esc(n.local_reason)}</div><button ${n.local_available ? "" : "disabled"} onclick="usePurchase(${J(n.item_id)})">Use this one</button></div></div>`;
+    }
+  }
+  $("#out").innerHTML = h;
+}
+
+async function usePurchase(itemId) {
+  const r = await fetch("/api/use-purchase", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: R.key, item_id: itemId }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return toast("Didn't work: " + (j.detail || r.statusText));
+  toast("Linked. It'll be used from now on.");
+  run(R.typed);
+}
+
+$("#ask").onsubmit = e => { e.preventDefault(); run($("#q").value.trim()); };
+const start = new URLSearchParams(location.search).get("q");
+if (start) { $("#q").value = start; run(start); } else { $("#q").focus(); }
+window.toast = toast;
+window.onDataChanged = () => { if (R) run(R.typed); };
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>

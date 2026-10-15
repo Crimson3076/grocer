@@ -1,0 +1,22 @@
+# Secrets: the real .env holds the Mealie and Home Assistant tokens. Never commit it.
+.env
+.env.*
+!.env.example
+
+# Runtime data (SQLite, browser profile, image caches)
+data/
+*.db
+*.sqlite*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Bundles and editor clutter
+*.zip
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dinners</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6; --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 16px 16px 110px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+  a { color: inherit; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .links { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .small { font-size: 13px; color: var(--muted); }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.primary, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
+  .meal { background: var(--card); border: 2px solid var(--line); border-radius: 16px; overflow: hidden;
+    display: flex; flex-direction: column; transition: border-color .15s, opacity .15s; }
+  .meal.on { border-color: var(--accent); }
+  .meal.done, .meal.off { opacity: .6; }
+  .meal.done { opacity: .5; }
+  .pic { position: relative; aspect-ratio: 4 / 3; background: var(--chip); cursor: pointer; }
+  .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pic .noimg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 28px; }
+  .tick { position: absolute; top: 8px; left: 8px; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(255,255,255,.92); border: 2px solid var(--line); display: grid; place-items: center;
+    font-size: 17px; font-weight: 700; color: transparent; }
+  .meal.on .tick { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .day { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.62); color: #fff; font-size: 12px;
+    font-weight: 600; padding: 3px 8px; border-radius: 999px; }
+  .badge { position: absolute; bottom: 8px; left: 8px; background: var(--ok-bg); color: var(--accent); font-size: 12px;
+    font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .name { font-weight: 600; line-height: 1.25; font-size: 15px; }
+  .name a { text-decoration: none; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .grow { flex: 1; min-width: 0; }
+  .serv { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+  .serv button { width: 30px; height: 30px; padding: 0; border-radius: 50%; }
+  .serv b { min-width: 20px; text-align: center; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+  .tools button { font-size: 13px; padding: 5px 9px; }
+  .empty { border: 2px dashed var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column;
+    gap: 8px; justify-content: center; min-height: 120px; font-size: 15px; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); z-index: 10; }
+  .bar .in { max-width: 820px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+  .bar .grow { font-size: 14px; color: var(--muted); }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 12px 0; }
+  /* recipe chooser */
+  dialog { border: none; border-radius: 18px; padding: 0; width: min(560px, calc(100vw - 24px)); max-height: 86vh;
+    background: var(--card); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  .dh { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--card); }
+  .dh input { font: inherit; width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); margin-top: 8px; }
+  .list { padding: 6px 10px 14px; overflow: auto; max-height: calc(86vh - 130px); }
+  .opt { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 12px; cursor: pointer; }
+  .opt:hover { background: var(--chip); }
+  .opt img, .opt .ph { width: 56px; height: 42px; border-radius: 8px; object-fit: cover; background: var(--chip); flex: none; }
+  .star { background: none; border: none; font-size: 20px; padding: 4px 6px; color: var(--muted); }
+  .star.on { color: #e0a100; }
+  .toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 8px 14px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div id="steps"></div>
+  <h1>Which dinners are we shopping for?</h1>
+  <div class="sub">Tap a dinner to add or remove it. Ordered ones are greyed out.</div>
+  <div id="out"><div class="sub" style="margin-top:16px">Loading dinners from Mealie...</div></div>
+</main>
+<div class="bar"><div class="in">
+  <div class="grow" id="count"></div>
+  <button class="primary" id="go">Next: check the list</button>
+</div></div>
+
+<dialog id="chooser">
+  <div class="dh">
+    <div class="row"><b class="grow" id="ctitle">Choose a dinner</b><button onclick="closeChooser()">Close</button></div>
+    <input type="search" id="cq" placeholder="Search all Mealie recipes" autocomplete="off">
+    <div class="small" id="chint" style="margin-top:6px"></div>
+  </div>
+  <div class="list" id="clist"></div>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = s => esc(JSON.stringify(s));
+const day = d => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+const addDays = (iso, n) => { const x = new Date(iso + "T12:00:00"); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+const short = d => { const x = new Date(d + "T12:00:00"); return x.toLocaleDateString(undefined, { weekday: "short" }) + " " + x.getDate(); };
+let D = null;
+
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2400); }
+
+async function api(path, body) {
+  document.documentElement.classList.add("loading");
+  try {
+    const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j;
+  } catch (e) { toast("Didn't work: " + e.message); throw e; }
+  finally { document.documentElement.classList.remove("loading"); }
+}
+
+async function load() {
+  try { D = await api("/api/dinners"); render(); }
+  catch (e) { $("#out").innerHTML = `<div class="note">Couldn't read the meal plan from Mealie. ${esc(e.message)}</div>`; }
+}
+
+function card(m) {
+  const cls = m.ordered ? "done" : m.selected ? "on" : "off";
+  return `<div class="meal ${cls}">
+    <div class="pic" ${m.ordered ? "" : `onclick="toggle(${J(m.key)}, ${!m.selected})"`} title="${m.ordered ? "" : m.selected ? "Leave out of this order" : "Add to this order"}">
+      <img loading="lazy" alt="" src="/meal-img/${esc(m.recipe_id)}" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🍽</div>'">
+      ${m.ordered ? "" : `<div class="tick">✓</div>`}
+      <div class="day">${esc(short(m.date))}</div>
+      ${m.ordered ? `<div class="badge">Ordered ${esc(day(m.ordered.slice(0, 10)))}</div>` : ""}
+    </div>
+    <div class="body">
+      <div class="name">${m.url ? `<a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a>` : esc(m.name)}</div>
+      ${m.ordered ? "" : `
+      <div class="serv"><span class="grow small">Serves</span>
+        <button aria-label="Fewer" onclick="servings(${J(m)}, -1)">−</button><b>${m.servings % 1 ? m.servings : Math.round(m.servings)}</b>
+        <button aria-label="More" onclick="servings(${J(m)}, 1)">+</button></div>
+      <div class="tools"><button onclick="swap(${J(m.key)})" title="Pick another dinner at random">🎲 Swap</button>
+        <button onclick="openChooser(${J(m.date)}, ${J(m.key)})">Choose…</button></div>`}
+    </div></div>`;
+}
+
+function render() {
+  const open = D.meals.filter(m => !m.ordered);
+  let h = `<div class="actions">
+      <button onclick="toggleAll(true)">Select all</button><button onclick="toggleAll(false)">Select none</button>
+      ${D.empty.length ? `<button onclick="fill()">🎲 Fill empty days</button>` : ""}</div>`;
+  // group by week (Sunday start) so two weeks read clearly
+  const weeks = {};
+  for (const m of D.meals) {
+    const d = new Date(m.date + "T12:00:00"); d.setDate(d.getDate() - d.getDay());
+    (weeks[d.toISOString().slice(0, 10)] ||= []).push(m);
+  }
+  const empties = D.empty.slice();
+  for (const [wk, ms] of Object.entries(weeks)) {
+    const end = new Date(wk + "T12:00:00"); end.setDate(end.getDate() + 6);
+    const endIso = end.toISOString().slice(0, 10);
+    const slots = [...ms.map(m => ({ date: m.date, m })),
+                   ...empties.filter(d => d >= wk && d <= endIso).map(d => ({ date: d }))];
+    slots.sort((a, b) => a.date.localeCompare(b.date));
+    // name the week by what's shown, not by the Sunday it started on
+    const now = new Date(), todayIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const which = wk <= todayIso && todayIso <= endIso ? "This week" : wk > todayIso && wk <= addDays(todayIso, 7) ? "Next week" : "Later";
+    h += `<h2>${which} · ${esc(short(slots[0].date))} to ${esc(short(slots[slots.length - 1].date))}</h2><div class="grid">`;
+    for (const s of slots) h += s.m ? card(s.m) : emptyCard(s.date);
+    h += `</div>`;
+  }
+  const leftover = empties.filter(d => !Object.keys(weeks).some(wk => {
+    const e = new Date(wk + "T12:00:00"); e.setDate(e.getDate() + 6); return d >= wk && d <= e.toISOString().slice(0, 10); }));
+  if (leftover.length) h += `<h2>Not planned yet</h2><div class="grid">${leftover.map(emptyCard).join("")}</div>`;
+  if (!D.meals.length && !leftover.length) h += `<div class="note">No dinners planned in Mealie for the next two weeks.</div>`;
+  $("#out").innerHTML = h;
+  const sel = open.filter(m => m.selected);
+  const n = sel.length;
+  $("#count").textContent = n ? `${n} dinner${n === 1 ? "" : "s"} · ${day(sel[0].date)} to ${day(sel[n - 1].date)}` : "No dinners selected";
+  $("#go").disabled = !n;
+}
+
+function emptyCard(d) {
+  return `<div class="empty"><div><b>${esc(day(d))}</b><div class="small">No dinner planned</div></div>
+    <div class="tools"><button onclick="addRandom(${J(d)})">🎲 Random</button><button onclick="openChooser(${J(d)}, null)">Choose…</button></div></div>`;
+}
+
+async function toggle(key, on) { await api("/api/dinners/choose", { keys: [key], selected: on }); await load(); }
+async function toggleAll(on) {
+  await api("/api/dinners/choose", { keys: D.meals.filter(m => !m.ordered).map(m => m.key), selected: on }); await load();
+}
+async function servings(m, step) {
+  const v = Math.max(1, Math.min(20, Math.round(m.servings) + step));
+  await api("/api/servings", { date: m.date, entry_type: m.entry_type, recipe_id: m.recipe_id, servings: v }); await load();
+}
+async function swap(key) {
+  const r = await api("/api/dinners/swap", { key });
+  await load();
+  const m = D.meals.find(x => x.date === r.date && x.recipe_id === r.recipe_id);
+  toast(m ? `Swapped to ${m.name}` : "Swapped");
+}
+async function addRandom(d) {
+  const r = await api("/api/dinners/fill_day", { day: d });
+  await load(); toast(`Added ${r.name}`);
+}
+async function fill() {
+  const r = await api("/api/dinners/fill", {});
+  toast(r.added.length ? `Planned ${r.added.length} dinner${r.added.length === 1 ? "" : "s"}` : "Every day already has a dinner");
+  await load();
+}
+
+// ---- choosing a specific recipe
+let C = { date: null, key: null, timer: null };
+async function openChooser(d, key) {
+  C.date = d; C.key = key;
+  $("#ctitle").textContent = (key ? "Replace dinner for " : "Dinner for ") + day(d);
+  $("#cq").value = "";
+  $("#chooser").showModal();
+  await search("");
+}
+function closeChooser() { $("#chooser").close(); }
+async function search(q) {
+  const r = await api("/api/recipes/choices?q=" + encodeURIComponent(q));
+  $("#chint").textContent = q ? `Recipes matching "${q}". ★ adds one to the "${r.tag}" rotation.`
+    : r.rotation_source === "tag" ? `Your "${r.tag}" rotation. Search to find any other recipe.`
+    : `No recipes are tagged "${r.tag}" in Mealie yet, so these are dinners you've planned lately. Tap ★ to start the rotation.`;
+  $("#clist").innerHTML = r.recipes.map(x => `<div class="opt" onclick="chosen(${J(x.id)})">
+      <img loading="lazy" alt="" src="/meal-img/${esc(x.id)}" onerror="this.outerHTML='<div class=&quot;ph&quot;></div>'">
+      <div class="grow">${esc(x.name)}</div>
+      <button class="star ${x.in_rotation ? "on" : ""}" title="${x.in_rotation ? "Remove from" : "Add to"} the rotation"
+        onclick="event.stopPropagation(); star(this, ${J(x.slug)}, ${!x.in_rotation})">★</button></div>`).join("")
+    || `<div class="small" style="padding:10px">Nothing found.</div>`;
+}
+$("#cq").addEventListener("input", e => { clearTimeout(C.timer); C.timer = setTimeout(() => search(e.target.value.trim()), 250); });
+async function chosen(recipeId) {
+  await api("/api/dinners/set", { day: C.date, recipe_id: recipeId, key: C.key });
+  closeChooser(); await load(); toast("Dinner set");
+}
+async function star(btn, slug, on) {
+  await api("/api/recipes/rotation", { slug, on });
+  btn.classList.toggle("on", on);
+  btn.setAttribute("onclick", `event.stopPropagation(); star(this, ${JSON.stringify(slug)}, ${!on})`);
+  toast(on ? "Added to the rotation" : "Removed from the rotation");
+}
+
+$("#go").onclick = async () => {
+  await startJob("/api/review/build");
+  location.href = "/review";
+};
+document.addEventListener("DOMContentLoaded", () => { if (window.steps) $("#steps").innerHTML = steps(1); });
+window.toast = toast;
+window.onDataChanged = load;
+load();
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>

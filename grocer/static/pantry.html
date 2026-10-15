@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pantry</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d1f1c; --muted: #6b6f68; --line: #e4e2db;
+    --accent: #2f6b3f; --accent-ink: #ffffff; --warn: #a3561c; --warn-bg: #fbefe4; --chip: #eeece6;
+    --ok-bg: #e5f1e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151714; --card: #1f221e; --ink: #ecebe6; --muted: #9da197; --line: #2f332d;
+      --accent: #6fbf83; --accent-ink: #0f1a12; --warn: #f0a868; --warn-bg: #33261b; --chip: #2a2e28; --ok-bg: #22322a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px 16px 60px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; }
+  a { color: inherit; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .title { font-weight: 600; }
+  .small { font-size: 13px; color: var(--muted); }
+  .clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--warn); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px;
+    background: var(--chip); color: var(--muted); white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--accent); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .thumb { width: 56px; height: 56px; flex: none; border-radius: 10px; background: #fff; object-fit: contain;
+    border: 1px solid var(--line); }
+  .thumb.empty { display: grid; place-items: center; color: #9a9a9a; font-size: 22px; background: var(--chip); }
+  .thumb.sm { width: 44px; height: 44px; border-radius: 8px; }
+  .lines { margin-top: 6px; font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 8px; }
+  .more { margin-top: 10px; display: none; border-top: 1px solid var(--line); padding-top: 8px; }
+  .more.open { display: block; }
+  .res { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .res:first-child { border-top: 0; }
+  input[type=text], input[type=search] { font: inherit; width: 100%; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .filters { display: flex; gap: 8px; margin: 14px 0 4px; align-items: center; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 8px 14px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>What we have</h1><div class="sub" id="count">Loading...</div></div>
+    <a class="btn" href="/settings">← Settings</a>
+  </div>
+  <div class="filters">
+    <input type="search" id="q" placeholder="Filter ingredients">
+    <button id="weekOnly" class="on">This week</button>
+  </div>
+  <div id="list"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = s => esc(JSON.stringify(s));            // safe JS string literal inside an HTML attribute
+let IDS = new Map();
+const nid = key => { if (!IDS.has(key)) IDS.set(key, IDS.size); return IDS.get(key); };
+const money = n => n == null ? "" : "$" + Number(n).toFixed(2);
+const CAT = { produce: "Produce", meat: "Meat", seafood: "Seafood", dairy: "Dairy & eggs", bakery: "Bakery",
+  pantry: "Pantry", spice: "Spices", condiment: "Sauces & condiments", oil: "Oils", frozen: "Frozen", other: "Other" };
+const SOURCE = { history: ["Bought before", "ok"], manual: ["You chose", "ok"], search: ["Found by the app", ""] };
+let DATA = { items: [], levels: [] }, weekOnly = true, open = new Set();
+
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1800); }
+async function api(path, body, label) {
+  document.documentElement.classList.add("loading");
+  try {
+    const r = await fetch(path, { method: body === undefined ? "GET" : "POST",
+      headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (label) toast(label);
+    return j;
+  } catch (e) { toast("Didn't work: " + e.message); throw e; }
+  finally { document.documentElement.classList.remove("loading"); }
+}
+async function load() { DATA = await api("/api/pantry"); render(); }
+async function act(path, body, label) { await api(path, body, label); await load(); }
+
+function level(stock) {
+  if (stock == null) return null;
+  if (stock <= 0.05) return "out";
+  if (stock <= 0.35) return "low";
+  if (stock <= 0.7) return "medium";
+  return "high";
+}
+
+function render() {
+  const q = $("#q").value.trim().toLowerCase();
+  let items = DATA.items.filter(i => (!weekOnly || i.this_week) && (!q || i.key.includes(q)
+    || (i.pick?.title || "").toLowerCase().includes(q)));
+  const linked = DATA.items.filter(i => i.pick).length;
+  $("#count").textContent = `${DATA.items.length} ingredients · ${linked} linked to a product`;
+  const groups = {};
+  for (const i of items) (groups[i.category] ||= []).push(i);
+  let h = items.length ? "" : `<p class="sub">Nothing here${weekOnly ? " for this week. Tap This week to see everything" : ""}.</p>`;
+  for (const [cat, list] of Object.entries(groups)) {
+    h += `<h2>${CAT[cat] || cat}</h2>`;
+    for (const i of list) h += card(i);
+  }
+  $("#list").innerHTML = h;
+}
+
+function card(i) {
+  const k = J(i.key), n = nid(i.key), p = i.pick, lv = level(i.stock);
+  const [srcText, srcCls] = p ? (SOURCE[p.source] || SOURCE.search) : ["No product", "warn"];
+  const needsLook = p && p.source === "search" && !p.approved;
+  return `<div class="card">
+    <div class="row">${thumb(p)}<div class="grow">
+      <div class="title">${esc(i.key)}<span class="tag ${srcCls}">${srcText}</span>${needsLook ? '<span class="tag warn">Not confirmed</span>' : ""}${i.staple ? '<span class="tag">We always have this</span>' : ""}</div>
+      <div class="small clip">${p ? `<a href="${esc(p.url)}" target="_blank">${esc(p.title)}</a> · ${money(p.price)}` : "Not linked to a Walmart product yet"}</div>
+      ${i.sources.length ? `<div class="small">Used in ${i.sources.map(n => n === "Restock" ? "your restock list" : DATA.recipes && DATA.recipes[n]
+          ? `<a href="${esc(DATA.recipes[n])}" target="_blank">${esc(n)}</a>` : esc(n)).join(", ")}</div>` : ""}
+      <div class="small"><a href="/check?q=${encodeURIComponent(i.key)}">Why this product?</a></div>
+    </div></div>
+    ${i.lines.length ? `<div class="lines">${[...new Set(i.lines)].slice(0, 4).map(esc).join("<br>")}</div>` : ""}
+    <div class="chips">
+      <button onclick="toggle(this,${k})">Change product</button>
+      ${DATA.levels.map(l => `<button class="${lv === l ? "on" : ""}" onclick="act('/api/stock',{food:${k},level:'${l}'},'${l === "out" || l === "low" ? "On the next order" : "Saved"}')">${l[0].toUpperCase() + l.slice(1)}</button>`).join("")}
+    </div>
+    <div class="more ${open.has(i.key) ? "open" : ""}" id="more-${n}">
+      <div class="row"><input type="search" id="s-${n}" value="${esc(i.key)}" placeholder="Search Walmart or paste a link">
+        <button onclick="find(${k})">Search</button></div>
+      <div id="r-${n}" style="margin-top:6px"></div>
+      <div class="chips">
+        <button class="${i.staple ? "on" : ""}" onclick="act('/api/food',{key:${k},staple:${!i.staple}},'Saved')">We always have this</button>
+        <button class="${i.brand_lock ? "on" : ""}" onclick="act('/api/food',{key:${k},brand_lock:${!i.brand_lock}},'Saved')">Only this exact product</button>
+        <button class="danger" onclick="remove(${k})">Remove</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <select id="same-${n}" style="flex:1;font:inherit;padding:7px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
+          <option value="">Same as another ingredient...</option>
+          ${DATA.items.filter(o => o.key !== i.key && o.category === i.category)
+              .map(o => `<option value="${esc(o.key)}">${esc(o.key)}</option>`).join("")}
+        </select>
+        <button onclick="mergeInto(${k})">Merge</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bigOf(src) {
+  if (!src) return "";
+  if (src.startsWith("/img/")) return src + "?size=large";
+  return src.split("?")[0] + "?odnHeight=900&odnWidth=900&odnBg=FFFFFF";
+}
+
+function thumb(p, cls = "") {
+  if (!p) return `<div class="thumb empty ${cls}">?</div>`;
+  const src = p.image || "";
+  return src ? `<img class="thumb ${cls}" loading="lazy" alt="" src="${esc(src)}" data-big="${esc(bigOf(src))}" data-caption="${esc(p.title || "")}" onerror="this.outerHTML='<div class=&quot;thumb empty ${cls}&quot;>·</div>'">`
+             : `<div class="thumb empty ${cls}">·</div>`;
+}
+
+function toggle(btn, key) {
+  const el = document.getElementById("more-" + nid(key));
+  el.classList.toggle("open");
+  el.classList.contains("open") ? open.add(key) : open.delete(key);
+}
+
+async function find(key) {
+  const q = document.getElementById("s-" + nid(key)).value.trim();
+  if (!q) return;
+  if (/walmart\.com|^\d{6,}$/.test(q)) return use(key, q);
+  const box = document.getElementById("r-" + nid(key));
+  box.innerHTML = `<div class="small">Searching Walmart...</div>`;
+  const { results } = await api("/api/search?q=" + encodeURIComponent(q));
+  box.innerHTML = results.length ? results.map(r => `<div class="res">${thumb(r, "sm")}<div class="grow small">
+      <a href="${esc(r.url)}" target="_blank">${esc(r.title)}</a><br>${money(r.price)}${r.unit_price ? " · " + esc(r.unit_price) : ""}${r.local_reason ? " · " + esc(r.local_reason) : ""}${r.bought_before ? ' <span class="tag ok">Bought before</span>' : ""}</div>
+      <button onclick="use(${J(key)},${J(r.item_id)})">Use</button></div>`).join("")
+    : `<div class="small">No products with verified local availability. Check your store selection on the review page.</div>`;
+}
+
+async function use(key, idOrUrl) { await act("/api/swap", { key, url: idOrUrl }, "Linked"); }
+async function remove(key) { await act("/api/food/delete", { key }, "Removed"); }
+async function mergeInto(key) {
+  const target = document.getElementById("same-" + nid(key)).value;
+  if (!target) return toast("Pick the ingredient it's the same as");
+  await act("/api/merge", { old: key, new: target }, `Merged into ${target}`);
+}
+
+$("#q").oninput = render;
+$("#weekOnly").onclick = e => { weekOnly = !weekOnly; e.target.classList.toggle("on", weekOnly); render(); };
+load();
+window.toast = toast;
+window.onDataChanged = load;
+</script>
+<script src="/static/status.js"></script>
+</body>
+</html>
