@@ -73,8 +73,8 @@
       <div class="small">Stock levels and the product each ingredient uses</div></span><span class="go">›</span></a>
     <a class="item" href="/check"><span class="ic">🔍</span><span class="grow">Why did it pick that?
       <div class="small">See which product an ingredient uses and why</div></span><span class="go">›</span></a>
-    <button class="item" onclick="startJob('/api/dedupe')"><span class="ic">🧹</span><span class="grow">Merge duplicate ingredients
-      <div class="small">"Cracked black pepper" and "black pepper" become one</div></span><span class="go">›</span></button>
+    <button class="item" onclick="document.getElementById('ingredient-cleanup').scrollIntoView({behavior:'smooth'})"><span class="ic">🧹</span><span class="grow">Review duplicate ingredients
+      <div class="small">Review suggestions before changing products or stock</div></span><span class="go">›</span></button>
     <a class="item" href="/mealie-cleanup"><span class="ic">🍲</span><span class="grow">Clean up Mealie's ingredients
       <div class="small">Merge duplicates in Mealie itself, after you review them</div></span><span class="go">›</span></a>
   </div>
@@ -137,6 +137,7 @@ window.onDataChanged = load;
 document.addEventListener("DOMContentLoaded", () => { $("#steps").innerHTML = steps(0); });
 load();
 </script>
-<script src="/static/status.js"></script>
+<script src="/static/status.js?v=0.2.0"></script>
+<script src="/static/flow.js?v=0.2.0"></script>
 </body>
 </html>

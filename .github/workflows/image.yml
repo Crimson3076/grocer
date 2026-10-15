@@ -34,12 +34,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          load: true
+          push: false
+          build-args: |
+            GROCER_REVISION=${{ github.sha }}
           tags: |
             ghcr.io/crimson3076/grocer:latest
             ghcr.io/crimson3076/grocer:${{ github.sha }}
@@ -48,3 +51,30 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Smoke test without external network access
+        env:
+          IMAGE: ghcr.io/crimson3076/grocer:${{ github.sha }}
+        run: |
+          GROCER_EXPECTED_VERSION=$(python -c 'from grocer.readiness import VERSION; print(VERSION)')
+          docker run -d --name grocer-smoke --network none "$IMAGE"
+          for attempt in $(seq 1 30); do
+            if docker exec grocer-smoke curl -fsS http://127.0.0.1:8790/health; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec -e GROCER_EXPECTED_VERSION="$GROCER_EXPECTED_VERSION" grocer-smoke python -c 'import json, os, urllib.request; data=json.load(urllib.request.urlopen("http://127.0.0.1:8790/api/setup")); assert data["version"] == os.environ["GROCER_EXPECTED_VERSION"]; assert not data["configured"]'
+          docker exec grocer-smoke test -S /tmp/.X11-unix/X99
+          docker exec grocer-smoke curl -fsS -o /dev/null http://127.0.0.1:6080/vnc.html
+          docker exec grocer-smoke google-chrome --version
+      - name: Publish tested image
+        env:
+          IMAGE: ghcr.io/crimson3076/grocer:${{ github.sha }}
+        run: |
+          docker push "$IMAGE"
+          docker push ghcr.io/crimson3076/grocer:latest
+      - name: Container diagnostics
+        if: always()
+        run: |
+          docker logs --tail 80 grocer-smoke || true
+          docker rm -f grocer-smoke || true

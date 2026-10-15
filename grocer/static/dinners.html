@@ -86,7 +86,7 @@
 <main>
   <div id="steps"></div>
   <h1>Which dinners are we shopping for?</h1>
-  <div class="sub">Tap a dinner to add or remove it. Ordered ones are greyed out.</div>
+  <div class="sub">Tap a dinner to add or remove it, or add groceries below. Ordered ones are greyed out.</div>
   <div id="out"><div class="sub" style="margin-top:16px">Loading dinners from Mealie...</div></div>
 </main>
 <div class="bar"><div class="in">
@@ -183,8 +183,8 @@ function render() {
   $("#out").innerHTML = h;
   const sel = open.filter(m => m.selected);
   const n = sel.length;
-  $("#count").textContent = n ? `${n} dinner${n === 1 ? "" : "s"} · ${day(sel[0].date)} to ${day(sel[n - 1].date)}` : "No dinners selected";
-  $("#go").disabled = !n;
+  $("#count").textContent = n ? `${n} dinner${n === 1 ? "" : "s"} · ${day(sel[0].date)} to ${day(sel[n - 1].date)}` : "Groceries only, or choose dinners";
+  $("#go").disabled = false;
 }
 
 function emptyCard(d) {
@@ -259,6 +259,7 @@ window.toast = toast;
 window.onDataChanged = load;
 load();
 </script>
-<script src="/static/status.js"></script>
+<script src="/static/status.js?v=0.2.0"></script>
+<script src="/static/flow.js?v=0.2.0"></script>
 </body>
 </html>

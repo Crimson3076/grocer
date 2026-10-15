@@ -169,12 +169,13 @@ function render() {
               ...items.filter(i => i.status === "check").map(i => ({ kind: "stock", i }))];
   const missing = items.filter(i => i.status === "nopick");
   const fresh = buy.filter(i => i.new_pick);
-  const have = items.filter(i => ["covered", "staple", "skip"].includes(i.status));
+  const have = items.filter(i => ["covered", "staple"].includes(i.status));
+  const skipped = items.filter(i => i.status === 'skip');
   const picked = Settings.selected_meals;
-  const stale = picked && JSON.stringify(picked) !== JSON.stringify(R.meal_keys || []);
+  const stale = R.stale || picked && JSON.stringify(picked) !== JSON.stringify(R.meal_keys || []);
 
   let h = steps(2) + `<h1>Check the list</h1>
-    <div class="sub">${R.meals.length} dinner${R.meals.length === 1 ? "" : "s"}, ${day(R.week_start)} to ${day(R.week_end || R.week_start)}</div>`;
+    <div class="sub">${R.meals.length ? `${R.meals.length} dinner${R.meals.length === 1 ? '' : 's'}, ${day(R.week_start)} to ${day(R.week_end || R.week_start)}` : `Groceries-only trip · ${day(R.week_start)}`}</div>`;
 
   if (building) h += `<div class="note good">Getting your list ready. This can take a few minutes because it goes slowly on
     Walmart's site. You can leave this page; you'll get a notification when it's done.</div>`;
@@ -184,13 +185,13 @@ function render() {
 
   // ---- needs you
   const now0 = new Date(), today0 = new Date(now0.getTime() - now0.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-  const needCount = qs.length + missing.length + fresh.length + (stale || R.meals.some(m => m.date < today0) ? 1 : 0);
+  const needCount = qs.length + missing.length + fresh.length + (R.unparsed?.length || 0) + (stale || R.meals.some(m => m.date < today0) ? 1 : 0);
   if (needCount) h += `<h2>Needs you (${needCount})</h2>`;
   const now = new Date(), todayIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const passed = R.meals.filter(m => m.date < todayIso);
   if (passed.length) h += `<div class="note">${passed.length === 1 ? `${esc(passed[0].name)} (${day(passed[0].date)}) has` : `${passed.length} of these dinners have`} already passed. <button class="primary" onclick="rebuild()">Update the list</button></div>`;
   else if (stale) h += `<div class="note">You changed the dinners since this list was made. <button class="primary" onclick="rebuild()">Update the list</button></div>`;
-  if (!R.meals.length && !stale) h += `<div class="note">No dinners picked yet. <a class="btn primary" href="/dinners">Choose dinners</a></div>`;
+  if (!R.meals.length && !stale) h += `<div class="note good">Shopping for groceries only. <a class="btn" href="/dinners">Add dinners if you like</a></div>`;
   if (qs.length) h += question(qs[0], qs.length);
   for (const i of missing) h += `<div class="card row">${thumb(null)}<div class="grow">
       <div class="name">${esc(i.key)}</div><div class="small">Not found at Walmart for today or tomorrow · for ${esc(forWhat(i))}</div></div>
@@ -206,7 +207,7 @@ function render() {
         <button class="link" onclick="openSheet(${J(i.key)})">Change</button></div>`;
     h += `</div>`;
   }
-  if (!needCount && R.meals.length && !building) h += `<div class="note good">Nothing needs you. Check the cart below if you like, then tap Send to Walmart.</div>`;
+  if (!needCount && buy.length && !building) h += `<div class="note good">Nothing needs you. Check the cart below if you like, then tap Send to Walmart.</div>`;
 
   // ---- going in the cart
   const groups = {};
@@ -230,13 +231,13 @@ function render() {
     h += `<details class="sec"><summary><div class="grow"><div class="name">Already have (${have.length})</div>
         <div class="small">Not buying these this time</div></div></summary><div class="in">`;
     for (const i of have) h += `<div class="line"><div class="grow"><div class="name">${esc(i.key)}</div>
-        <div class="small">${i.status === "skip" ? "You said not this week" : i.status === "staple" ? "We always have this" : "Enough at home"}</div></div>
+        <div class="small">${i.status === "staple" ? "You told us you always have this" : "Probably enough, based on your last estimate"}</div></div>
         ${i.status === "skip" ? `<button onclick="act('/api/skip',{key:${J(i.key)},skip:false},'Back on the list')">Buy it</button>`
           : `<button onclick="act('/api/stock',{food:${J(i.key)},level:'out'},'Added to the cart')">We're out</button>`}</div>`;
     h += `</div></details>`;
   }
-  if (R.unparsed?.length) h += `<details class="sec"><summary><div class="grow"><div class="name">Recipe lines it couldn't read (${R.unparsed.length})</div>
-      <div class="small">Add these by hand in Walmart if you need them</div></div></summary><div class="in small">${R.unparsed.map(esc).join("<br>")}</div></details>`;
+  if (skipped.length) h += `<details class="sec"><summary>Left for another trip (${skipped.length})</summary><div class="in">${skipped.map(i=>`<div class="line"><span class="grow">${esc(i.key)}</span><button onclick="act('/api/skip',{key:${J(i.key)},skip:false})">Include it</button></div>`).join('')}</div></details>`;
+  if (R.unparsed?.length) h += `<div class="note"><b>${R.unparsed.length} recipe lines still need you</b><p>The app could not read these. Buy them yourself or check the recipe before sending.</p>${R.unparsed.map(esc).join('<br>')}</div>`;
 
   h += `<div style="text-align:center;margin-top:18px">
       ${R.status === "approved" ? `<div class="small">Approved. It'll go into your Walmart cart Sunday morning, or tap Send now.</div>`
@@ -247,8 +248,8 @@ function render() {
   $("#total").textContent = "About " + money(total);
   $("#count").textContent = `${buy.length} item${buy.length === 1 ? "" : "s"}` + (qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"} left` : "");
   const s = $("#send");
-  s.textContent = "Send to Walmart"; s.disabled = building || !buy.length;
-  s.onclick = () => send(qs.length + missing.length);
+  s.textContent = "Send to Walmart"; s.disabled = building || !buy.length || !!stale || !!passed.length;
+  s.onclick = () => send(qs.length + missing.length + (R.unparsed?.length || 0));
   if (location.hash === "#send") s.focus();
 }
 
@@ -274,24 +275,25 @@ function renderSent() {
   const app = $("#app"), bar = $("#bar"), r = R.cart_result || {};
   bar.hidden = true;
   const lines = r.lines || [];
-  const problems = [...(r.carried || []), ...(r.unanswered || []), ...(r.no_pick || [])];
+  const problems = (r.unresolved || [...(r.carried || []), ...(r.unanswered || []), ...(r.no_pick || [])]).filter(k=>!(r.manual_purchases || []).includes(k));
   const missingIds = r.missing || [];
   let h = steps(R.status === "checked_out" ? 4 : 3);
   if (R.status === "checked_out") {
-    h += `<div class="card done"><div style="font-size:40px">🎉</div><div class="big-n">All done</div>
-      <p class="sub">Checkout recorded and pantry updated. The next order starts with the dinners after these.</p>
+    h += `<div class="card done"><div style="font-size:40px">🎉</div><div class="big-n">Purchase recorded</div>
+      <p class="sub">Groceries added to your pantry estimate. Ingredients stay set aside until you mark each dinner cooked or skipped.</p>
+      ${r.coverage?.some(m=>!m.complete)?`<div class="note">${r.coverage.filter(m=>!m.complete).length} dinner${r.coverage.filter(m=>!m.complete).length===1?' still needs':'s still need'} ingredients. They stay available for the next trip.</div>`:''}
       <a class="btn primary big" href="/dinners">Plan the next order</a></div>`;
   } else if (R.status === "failed") {
-    h += `<div class="card done"><div class="big-n">Didn't make it to Walmart</div>
+    h += `<div class="card done"><div class="big-n">This trip needs a check</div>
       <p class="sub">${esc(r.error || "Something went wrong filling the cart.")}</p>
-      <button class="primary big" onclick="startJob('/api/send')">Try again</button></div>`;
+      <button class="primary big" onclick="startJob('/api/send')">Try again</button><p><button onclick="checkedOut()">I already bought some groceries</button></p></div>`;
   } else {
     h += `<div class="card done"><div style="font-size:40px">🛒</div>
-      <div class="big-n">${r.added ?? lines.length} items · about ${money(r.estimated_total)}</div>
-      <div class="sub">are in your Walmart cart</div>
+      <div class="big-n">${r.added ?? lines.length} grocery lines ${r.unverified ? 'sent' : 'confirmed'}</div>
+      <div class="sub">${missingIds.length + problems.length} item${missingIds.length + problems.length===1?' needs':'s need'} attention · planned total about ${money(r.estimated_total)}</div>
       <p><a class="btn primary big" href="https://www.walmart.com/cart" target="_blank">Open Walmart to check out</a></p>
-      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}After buying the groceries, tap I already checked out to update what you have at home.</div>
-      <button class="link" onclick="checkedOut()">I already checked out</button>
+      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}After buying the groceries, tap Confirm what I bought to update your pantry estimate.</div>
+      <button class="primary big" onclick="checkedOut()">Confirm what I bought</button>
       <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Take it back out of the cart</summary>
         <div class="actions" style="justify-content:center">
           <button onclick="clearCart('ours')">Only what the app added</button>
@@ -299,7 +301,8 @@ function renderSent() {
   }
   if (problems.length || missingIds.length) {
     h += `<h2>Didn't go in the cart</h2><div class="card">`;
-    for (const k of problems) h += `<div class="line"><div class="grow"><div class="name">${esc(k)}</div><div class="small">Add it by hand in Walmart if you need it</div></div></div>`;
+    for (const k of problems) h += `<div class="line"><div class="grow"><div class="name">${esc(k)}</div><div class="small">${R.status === 'checked_out' ? 'Saved for the next trip' : r.decisions?.[k] === 'manual' ? 'Buying this yourself; confirm it after checkout' : r.decisions?.[k] === 'later' ? 'Saved for the next trip' : 'Choose what happens next'}</div>
+      ${R.status !== 'checked_out' ? `<a class="btn" href="https://www.walmart.com/search?q=${encodeURIComponent(k)}" target="_blank" rel="noopener" onclick="act('/api/trip/decision',{key:${J(k)},decision:'manual'})">Buy myself</a> <button onclick="act('/api/trip/decision',{key:${J(k)},decision:'later'})">Next trip</button> <button onclick="reopenFor(${J(k)})">Choose another</button>` : ''}</div></div>`;
     for (const id of missingIds) { const l = lines.find(x => String(x.pick.item_id) === String(id));
       h += `<div class="line">${thumb(l?.pick)}<div class="grow"><div class="name">${esc(l?.key || id)}</div><div class="small">Walmart didn't take it</div></div></div>`; }
     if (missingIds.length && R.status !== "checked_out") h += `<div class="actions"><button onclick="startJob('/api/send')">Try those again</button></div>`;
@@ -373,15 +376,42 @@ async function confirmAll() {
   toast("Saved"); await load();
 }
 function send(unanswered) {
-  if (unanswered && !confirm(`${unanswered} thing${unanswered === 1 ? "" : "s"} still need${unanswered === 1 ? "s" : ""} you. Those won't be bought. Send the rest to Walmart?`)) return;
-  startJob("/api/send");
+  if (unanswered) {
+    const dialog=document.createElement('dialog');dialog.className='flow-dialog flow-panel';
+    dialog.innerHTML=`<h2>${unanswered} things still need you</h2><p>These will stay unfinished and carry into the next trip. Send the rest?</p>`;
+    const send=document.createElement('button');send.textContent='Send the rest';send.className='primary';send.onclick=()=>{dialog.close();dialog.remove();startJob('/api/send');};
+    const back=document.createElement('button');back.textContent='Keep reviewing';back.onclick=()=>{dialog.close();dialog.remove();};dialog.append(send,back);document.body.appendChild(dialog);dialog.showModal();return;
+  }
+  startJob('/api/send');
 }
 function clearCart(scope) {
   const msg = scope === "all" ? "Empty your whole Walmart cart, including anything you added yourself?"
     : "Take this order's items back out of your Walmart cart? Anything you added yourself stays.";
   if (confirm(msg)) startJob("/api/cart/clear", { scope });
 }
-function checkedOut() { if (confirm("Mark this order as checked out? This updates what you have at home.")) act("/api/checked-out", {}, "Checkout recorded"); }
+async function reopenFor(key) {
+  const dialog=document.createElement('dialog');dialog.className='flow-dialog flow-panel';
+  dialog.innerHTML='<h2>Reopen this list?</h2><p>Items already in Walmart stay there. You can change products and resend only what is missing.</p>';
+  const go=document.createElement('button');go.textContent='Reopen and choose';go.onclick=async()=>{try{await api('/api/cart/reset',{});dialog.close();dialog.remove();await load();openSheet(key);}catch(e){toast(e.message);}};
+  const cancel=document.createElement('button');cancel.textContent='Cancel';cancel.onclick=()=>{dialog.close();dialog.remove();};dialog.append(go,cancel);document.body.appendChild(dialog);dialog.showModal();
+}
+function checkedOut() {
+  const plan=R.cart_result || {};
+  const dialog=document.createElement('dialog');dialog.className='flow-dialog flow-panel';
+  dialog.innerHTML='<h2>What did you buy?</h2><p>Confirm the quantities you actually purchased. Ingredients are set aside for dinners; they are not counted as eaten yet.</p>';
+  const inputs=new Map();
+  for(const line of plan.lines || []){
+    const row=document.createElement('label');row.className='frow';row.innerHTML=`<span>${esc(line.key)}</span>`;
+    const input=document.createElement('input');input.type='number';input.min='0';input.max='999';input.step='1';input.value=(R.status==='failed' || (plan.missing || []).includes(String(line.pick.item_id))) ? 0 : line.qty;input.setAttribute('aria-label','Purchased packages of '+line.key);row.appendChild(input);dialog.appendChild(row);inputs.set(line.key,input);
+  }
+  const manual=new Map();
+  for(const key of plan.unresolved || []){const row=document.createElement('label');row.className='frow';const input=document.createElement('input');input.type='checkbox';input.checked=false;row.appendChild(input);const label=document.createElement('span');label.textContent='I bought enough '+key+' myself (pantry estimate unchanged)';row.appendChild(label);dialog.appendChild(row);manual.set(key,input);}
+  const note=document.createElement('p');note.className='small';note.textContent='Set a quantity to 0 for anything you did not buy. Missing ingredients remain on the next trip.';dialog.appendChild(note);
+  const err=document.createElement('p');err.setAttribute('role','alert');dialog.appendChild(err);
+  const save=document.createElement('button');save.textContent='Record purchases';save.className='primary';
+  save.onclick=async()=>{save.disabled=true;try{const quantities=Object.fromEntries([...inputs].map(([k,input])=>{if(!input.checkValidity())throw Error('Enter whole package quantities from 0 to 999');return [k,Number(input.value)];}));const manual_keys=[...manual].filter(([,input])=>input.checked).map(([k])=>k);await api('/api/checked-out',{quantities,manual_keys});dialog.close();dialog.remove();await load();if(window.refreshMealFollowup)await window.refreshMealFollowup();}catch(e){err.textContent=e.message;}finally{save.disabled=false;}};
+  const cancel=document.createElement('button');cancel.textContent='Cancel';cancel.onclick=()=>{dialog.close();dialog.remove();};dialog.append(save,cancel);document.body.appendChild(dialog);dialog.showModal();
+}
 
 window.toast = toast;
 window.onJob = job => {
@@ -393,6 +423,7 @@ window.onDataChanged = () => { if (document.activeElement?.matches("input") || $
 $("#sheet").addEventListener("close", () => { if (deferred) { deferred = false; load(); } });
 load().catch(() => { $("#app").innerHTML = '<h1>Groceries</h1><p>Couldn\'t load the list.</p><button onclick="load()">Try again</button>'; });
 </script>
-<script src="/static/status.js"></script>
+<script src="/static/status.js?v=0.2.0"></script>
+<script src="/static/flow.js?v=0.2.0"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ Three screens, one button each, shown as steps at the top of every page:
 2. **Check**: only what needs a person is open. Questions come one at a time ("How much soy sauce do you have? Plenty / Running low / Out"), then anything not found at Walmart, then newly found products to confirm (✓ or Change, or "All look right"). "Going in the cart" (grouped by aisle) and "Already have" are collapsed. Change opens a sheet: quantity, things bought before, other options, a Walmart search, and plain switches (only this exact product, we always have this, don't buy this time).
 3. **Send to Walmart**: approves and fills the Walmart cart in one go. The screen then shows "N items, about $X are in your Walmart cart" with an Open Walmart button and anything that didn't make it.
 
-Checkout is always done by a person in Walmart. While an order sits in the cart, the app reads the Walmart cart every 3 hours. If our items are gone, it asks by phone whether checkout happened; it also asks after about a day. Removing items is not proof of a purchase. Only a person confirming checkout on the review page or phone notification credits pantry stock and marks dinners ordered. Prompts are limited to once per 20 hours for each review. A Saturday schedule still exists: 3:05 PM plan empty dinner days, 5 PM build the list and notify, Sunday 8:45 AM fill the cart if the list was approved ("Or put it in the cart automatically Sunday morning").
+Checkout is always done by a person in Walmart. While an order sits in the cart, the app reads the Walmart cart every 3 hours. If our items are gone, it asks by phone whether checkout happened; it also asks after about a day. Removing items is not proof of a purchase. Only a person confirming purchased quantities credits pantry stock. Only dinners with all their ingredients covered are marked ordered; missing ingredients and skipped groceries carry forward. Checkout reserves ingredients without consuming them. A person later marks the dinner Cooked or Didn’t cook to consume or release its reservation. Prompts are limited to once per 20 hours for each review. A Saturday schedule still exists: 3:05 PM plan empty dinner days, 5 PM build the list and notify, Sunday 8:45 AM fill the cart if the list was approved ("Or put it in the cart automatically Sunday morning").
 
 Everything else (Walmart sign-in, order history, store, what we have, why a product was picked, merging duplicates, cleaning up Mealie, rebuilding, starting over) lives on a Settings page behind the gear.
 
@@ -57,10 +57,11 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 
 ## Filling the cart (durable and retry-safe)
 
-- The plan for the week and the target quantity per product are saved before anything is added.
+- Each trip has a stable ID across draft rebuilds. Reviews are versioned snapshots of selected meals, recipe contents, servings, yields, and store. Stale inputs block approval and new cart fills, including forced fills. A second trip can use the same dates.
+- The plan and target quantity per product are saved before anything is added. Original cart quantities and additions verified by read-back are recorded for safe undo.
 - Before a new fill, each chosen product is checked live at the configured store and method, including replacements. Each product is visited at most once per fill attempt. Retries also recheck products with missing quantities and stop before adding if any are unavailable.
 - The cart is read first, and only the missing quantities are added, using Walmart's multi-item link `affil.walmart.com/cart/addToCart?items=ID|QTY,...`.
-- The cart is read again afterwards to confirm.
+- The cart is read again afterwards to confirm. Undo removes a whole line only if its baseline was zero and its current quantity equals confirmed Grocer additions. Shared or changed lines are left for the person to adjust.
 - If the cart can't be read on the first fill, the fill goes ahead and is marked unverified. A retry that can't read the cart refuses to add anything, so nothing is doubled.
 - A product that has gone away is swapped for a similar one, with the package count recalculated; size changes that can't be converted are left out and reported.
 - Robot checks pause the job, notify everyone with an "Open browser" link, and continue when someone solves it. If nobody does, the list finishes without the remaining searches.
@@ -69,6 +70,8 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 
 - **Review**: this week's list with thumbnails (cached locally, tap to enlarge), questions, swaps, quantities, servings, recipe names linked to Mealie, Approve, Fill cart now, and Confirm checkout.
 - **Pantry**:
+  - Stock is stored in physical base units where possible, so changing package sizes does not reinterpret a half-full package. The package estimate remains available for compatibility and display.
+  - Purchases, planned reservations, and consumption are separate. A ledger records purchases and cooking. Cooking and skipping are idempotent, and all checkout writes share a transaction.
   - Every ingredient with its stock level, linked product and image, and the recipes that use it.
   - Search Walmart to relink, use a past purchase, delete an ingredient, merge an ingredient into another, or find duplicates.
 - **Check an ingredient**: explains why a product was or wasn't picked. It shows the matching past purchases with the AI's verdict and reason, and near misses.
@@ -83,7 +86,7 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 - Never count a cart addition as a purchase; only a confirmed checkout credits stock.
 - Walmart pacing is learned: at least the learned gap between page loads (randomized up to 1.8x), a break every 8 pages, an hourly cap derived from the gap, and a little scrolling on each page. A robot check multiplies the gap by 1.5 (max 60 s), except checks in the first 2 pages after a warm-up; every 15 clean page loads multiplies it by 0.85 (min 5 s). After 20 minutes idle it warms up from the home page, and searches are typed into the search box (URL search as a fallback). The learned gap is saved and survives restarts. Searches are cached 12 hours and saved picks checked within 7 days are reused while building the list. Cart fills use live availability checks, with the same pacing.
 - Browser work happens on one worker thread, because Playwright's sync API is bound to one thread; quick edits never wait on it.
-- A wrong merge is worse than a missed one: duplicate detection must be conservative and reviewable.
+- A wrong merge is worse than a missed one: duplicate detection must be conservative and reviewable. Local scans save proposals; selected merges show product and stock survivors, snapshot the affected data, and support undo only when no newer ingredient or stock changes would be lost. Neither startup nor scheduled builds silently merge ingredients.
 - Keep everything local. Ports 8790 and 6080 are for the LAN only; the browser view has no password by the household's choice.
 - Startup must survive plain container restarts by clearing the virtual screen's lock file and Chrome's profile lock.
 
@@ -102,8 +105,32 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 
 ## Not built yet (ideas on the table)
 
-- Confirm meals were actually cooked before deducting stock, and roll skipped dinners to the next week.
+- Offer date changes for skipped dinners directly in Grocer; currently release their reserved ingredients and reschedule in Mealie.
 - Freshness and expiry tracking, and an away mode.
-- Per-item purchase quantities at checkout instead of assuming the plan was bought.
 - Remembering rejected picks across rebuilds.
 - A Stop button for running jobs.
+
+## Trip, pantry, and task storage (0.2)
+
+`trips` owns a stable ID, current review, and state. `reviews.trip_id` ties every
+snapshot to its trip. The legacy `cart_runs.week_start` column holds the trip ID
+for new runs; legacy records are resolved through their review ID. No table is
+recreated or dropped during upgrade. A pre-upgrade SQLite backup is created for
+older schemas.
+
+`stock.quantity` and `dimension` preserve physical amounts; `packages` is maintained
+as a compatible estimate. `reservations` stores per-meal ingredient amounts,
+`meal_progress` tracks planned/cooked/skipped dinners, and `inventory_events`
+records stock movement. Selected meals exclude their own reservations when
+calculating availability, so an unfinished dinner does not buy its already
+purchased ingredients a second time.
+
+`job_records` records accepted, running, done, failed, queued, interrupted,
+resumed, and dismissed tasks. Restart marks in-flight records interrupted rather
+than replaying browser actions. Supported tasks can be explicitly resumed; cart
+retry uses the saved plan and current quantities. A busy response is explicit.
+
+Setup checks are requested by the person, not run on every poll. They check
+Mealie credentials, Ollama's configured model, optional Home Assistant access,
+chosen store, and the last known Walmart session. Docker health is deliberately
+a lightweight liveness check. Version and build revision are shown in Settings.

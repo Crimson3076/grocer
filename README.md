@@ -13,7 +13,7 @@ Every page shows the same three steps at the top:
 
 1. **Dinners**: photo cards of the coming dinners from Mealie. Tick the ones to shop for, swap one at random, choose a specific recipe, or fill empty days. Changes are written back to Mealie. The random picker uses recipes tagged "Dinner rotation" in Mealie and favors ones you haven't had in a while.
 2. **Check**: answers a few one-at-a-time questions ("How much soy sauce do you have?"), shows anything it couldn't find, and asks you to confirm newly found products. Change opens a sheet with quantity, things you've bought before, other options with photos and local-store badges, and a search.
-3. **Send to Walmart**: puts everything in your Walmart cart. You check out in Walmart yourself. After buying the groceries, tap **I already checked out** in Grocer or confirm the phone notification to update the pantry estimate. An empty cart alone never counts as a purchase. Items can also be taken back out of the cart.
+3. **Send to Walmart**: puts everything in your Walmart cart. You check out in Walmart yourself. After buying the groceries, tap **Confirm what I bought**, correct the package quantities, and record the purchase. An empty cart alone never counts as a purchase. Ingredients are set aside for dinners; tap **Cooked** or **Didn’t cook** later to consume or release them. Items can also be taken back out of the cart.
 
 Everything else (Walmart sign-in, order history, store, browsing speed, pantry, merging duplicate ingredients, cleaning up Mealie, emptying the cart, starting over) is on **Settings**.
 
@@ -33,17 +33,66 @@ The image is built by GitHub on every change to `main` and published as `ghcr.io
 6. In **Settings**, enter the same store number and method.
 7. Go to **Dinners**, pick, then **Next: check the list**.
 
+In **Settings**, use **Get ready** and **Check connections** to check Mealie, the installed Ollama model, notifications, and the last confirmed Walmart sign-in. The installed Grocer version and image revision appear there. Docker health only checks that the app responds.
+
 Data lives in `/data` in the container (`/mnt/user/appdata/grocer` on the host): `grocer.env`, the SQLite database, the Chrome profile and image caches. Deleting, updating or re-pulling the container keeps all of it. New tables and columns are added on startup. Variables set on the container itself override `grocer.env`.
 
 ## Pulling a private image
 
-GitHub Actions tests and publishes an Intel/AMD 64-bit image on every push to `main`: `ghcr.io/crimson3076/grocer:latest`, plus a tag with the full commit SHA for rollback. While the repo is private the image is too, so the server has to log in once. Create a GitHub personal access token (classic) with only `read:packages`, then in the Unraid terminal:
+GitHub Actions tests and publishes an Intel/AMD 64-bit image on every push to `main`: `ghcr.io/crimson3076/grocer:latest`, plus a tag with the full commit SHA for rollback. Package visibility is independent of repository visibility. A public package can be pulled without a login. For a private package, the server has to log in once. Create a GitHub personal access token (classic) with only `read:packages`, then in the Unraid terminal:
 
 ```bash
 docker login ghcr.io -u Crimson3076
 ```
 
 Paste the token at the password prompt. Don't put it in `grocer.env` or the container's variables. Alternatively, make just the package public under the package's settings on GitHub; the code stays private.
+
+## Shopping trips and recovery
+
+Each shopping trip has its own ID, so you can shop more than once on the same day.
+Changing dinners, recipe contents, servings, yields, or store invalidates a draft
+list. Update it before sending. The app opens your current trip by default.
+
+Use **Add groceries** on Dinners, Review, or Pantry for a groceries-only trip.
+No dinner selection is required. Adding groceries during an active cart saves
+them for the next trip. Skipped items are separate from pantry estimates.
+
+Missing products offer **Buy myself**, **Next trip**, and **Choose another**.
+Choosing another product reopens the list after explaining that existing Walmart
+items stay in place. A dinner with missing ingredients stays unfinished and is
+available for a later trip. Purchase confirmation lets you set quantities to zero
+or confirm ingredients you bought yourself; manual purchases do not invent a
+precise pantry estimate.
+
+Cart fills record the original quantities and confirmed additions. **Only what
+the app added** removes only unchanged lines entirely owned by Grocer. Shared
+lines, unknown quantities, and later manual edits are preserved and reported.
+
+Tasks are saved in SQLite. After a container restart, interrupted tasks offer
+**Resume safely** or **Leave it for now**. A resumed cart task reads current
+quantities before adding anything. If another task is running, the app explicitly
+refuses a new action instead of silently dropping it. Requested rebuilds are
+remembered, including across restarts. Grocer never automatically resumes cart
+mutations after a restart.
+
+Ingredient cleanup now scans for suggestions without modifying anything. Review
+the kept product and stock estimate before applying selected merges. If the kept
+ingredient has no estimate, the source ingredient's physical amount is preserved
+when possible and otherwise marked uncertain. Undo restores
+the snapshot only while it cannot overwrite newer ingredient or stock edits.
+Scheduled builds and startup do not perform automatic ingredient merges.
+
+## Upgrading from 0.1
+
+The database upgrade adds tables and columns without dropping existing records.
+Before upgrading an older schema, Grocer saves a SQLite backup beside the database
+with `.before-0.2.0.db` in its name. Existing cart records remain readable and old
+pantry estimates are converted using their saved package sizes. Historical
+consumption already deducted by older versions cannot be reconstructed.
+
+Old draft lists must be rebuilt once because they have no input-version snapshot.
+Old cart plans have no reliable ownership history, so Grocer will not guess which
+quantities it can safely remove. Verify your pantry estimates after upgrading.
 
 ## Schedule
 
@@ -63,7 +112,9 @@ Keep ports 8790 (app) and 6080 (browser view) on the LAN or a VPN. Neither has a
 
 - Walmart has no public inventory API; the app reads the pages a shopper sees. A Walmart layout change can need an update in `grocer/walmart.py` or `grocer/availability.py`.
 - Availability can change between the check and checkout.
-- Pantry stock is approximate: checkout assumes the planned quantities were bought and the dinners get cooked.
+- Pantry stock is an estimate. Purchases add the quantities you confirm, while cooking consumes reserved ingredients. Recipes and package conversions can still need a correction.
+- Shared or manually changed Walmart cart lines are left in place when undoing a fill; adjust those in Walmart.
+- A person must confirm manual purchases and unread recipe ingredients. Grocer never infers a purchase from an empty cart.
 
 ## Tests
 

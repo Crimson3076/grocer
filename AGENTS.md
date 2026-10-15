@@ -28,6 +28,7 @@ All tests must pass. They use fakes (`FakeMealie`, `PlanMealie`, `CleanupMealie`
 | `grocer/parse.py`, `planner.py`, `units.py` | Ingredient text cleanup, splitting pairs ("salt and pepper"), quantities and package math |
 | `grocer/llm.py` | All Ollama calls (JSON schema output) |
 | `grocer/mealie.py`, `ha.py`, `ha_events.py` | Mealie REST client; Home Assistant notifications and the websocket listener |
+| `grocer/trips.py`, `pantry.py`, `task_history.py`, `cleanup.py`, `readiness.py` | Trip input versions and coverage; physical stock and meal reservations; restart recovery; reviewed cleanup; explicit setup checks |
 | `grocer/cart.py`, `ordering.py`, `history.py` | Cart targets and deficits, the retry-safe fill, matching past Walmart orders |
 | `grocer/db.py`, `config.py` | SQLite schema and helpers (tables added automatically); settings from the environment |
 | `grocer/static/` | The pages. Plain HTML plus `status.js` (progress bar, countdown, step header, lightbox). No build step, no framework |

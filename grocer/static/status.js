@@ -71,6 +71,13 @@
                     : `<div class="jbar ${pct === null ? "indef" : ""}"><i style="${pct !== null ? `width:${Math.max(pct, 4)}%` : ""}"></i></div>`}</div>`;
       return;
     }
+    if (s.recovery?.length) {
+      const task=s.recovery[0];box.className='show warn';
+      box.innerHTML=`<div class="ji"><b>A saved task needs attention</b><div class="js">${esc(task.label)}. ${esc(task.error || 'Review and continue when ready.')} Check your cart before resuming a cart task.</div>${task.can_resume ? '<button id="resume-task">Resume safely</button>' : '<a href="/settings">Review in Settings</a>'} <button id="dismiss-task">Leave it for now</button></div>`;
+      if(task.can_resume) box.querySelector('#resume-task').onclick=()=>window.startJob('/api/jobs/'+task.id+'/resume');
+      box.querySelector('#dismiss-task').onclick=()=>window.startJob('/api/jobs/'+task.id+'/dismiss');
+      return;
+    }
     const bg = s.bg;
     if (bg) {
       box.className = "show" + (bg.waiting ? " warn" : "");
@@ -102,6 +109,8 @@
       window.currentJob = s.job;
       if (window.onJob) window.onJob(s.job);
       if (version !== null && s.version !== version && window.onDataChanged) await window.onDataChanged();
+      if (window.refreshMealFollowup && s.version !== version) await window.refreshMealFollowup();
+      if (window.refreshCleanup && s.version !== version) await window.refreshCleanup();
       version = s.version;
       running = !!(s.job || s.bg);
     } catch (e) { /* server restarting; try again shortly */ }
@@ -117,7 +126,7 @@
       if (!r.ok) throw new Error(j.detail || r.statusText);
       if (j.job && j.job.already && window.toast) window.toast("Already working on something, it'll finish first");
       if (j.queued && window.toast) window.toast("Saved, it'll apply when the current update finishes");
-    } catch (e) { if (window.toast) window.toast("Didn't work: " + e.message); }
+    } catch (e) { if (window.toast) window.toast("Didn't work: " + e.message); throw e; }
     running = true;
     poll();
   };

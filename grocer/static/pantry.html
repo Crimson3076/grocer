@@ -60,7 +60,7 @@
 <body>
 <main>
   <div class="top">
-    <div><h1>What we have</h1><div class="sub" id="count">Loading...</div></div>
+    <div><h1>Pantry estimates</h1><div class="sub" id="count">Loading...</div></div>
     <a class="btn" href="/settings">← Settings</a>
   </div>
   <div class="filters">
@@ -129,7 +129,7 @@ function card(i) {
   const needsLook = p && p.source === "search" && !p.approved;
   return `<div class="card">
     <div class="row">${thumb(p)}<div class="grow">
-      <div class="title">${esc(i.key)}<span class="tag ${srcCls}">${srcText}</span>${needsLook ? '<span class="tag warn">Not confirmed</span>' : ""}${i.staple ? '<span class="tag">We always have this</span>' : ""}</div>
+      <div class="title">${esc(i.key)}<span class="tag ${srcCls}">${srcText}</span>${needsLook ? '<span class="tag warn">Not confirmed</span>' : ""}${i.staple ? '<span class="tag">We always have this</span>' : ""}</div><div class="small">${i.confidence != null && i.confidence < .5 ? 'Estimate needs checking' : 'Estimate, not a count'}${i.reserved_unknown ? ' · Some is set aside; amount uncertain' : ''}${i.reserved ? ' · '+i.reserved.toFixed(2)+' packages set aside for dinners' : ''}</div>
       <div class="small clip">${p ? `<a href="${esc(p.url)}" target="_blank">${esc(p.title)}</a> · ${money(p.price)}` : "Not linked to a Walmart product yet"}</div>
       ${i.sources.length ? `<div class="small">Used in ${i.sources.map(n => n === "Restock" ? "your restock list" : DATA.recipes && DATA.recipes[n]
           ? `<a href="${esc(DATA.recipes[n])}" target="_blank">${esc(n)}</a>` : esc(n)).join(", ")}</div>` : ""}
@@ -207,6 +207,7 @@ load();
 window.toast = toast;
 window.onDataChanged = load;
 </script>
-<script src="/static/status.js"></script>
+<script src="/static/status.js?v=0.2.0"></script>
+<script src="/static/flow.js?v=0.2.0"></script>
 </body>
 </html>

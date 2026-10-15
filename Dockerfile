@@ -1,5 +1,8 @@
 FROM python:3.12-slim-bookworm
 
+ARG GROCER_REVISION=development
+ENV GROCER_REVISION=$GROCER_REVISION
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
