@@ -88,12 +88,10 @@ def listing_from_node(n: dict, store_id: str = "", fulfillment: str = "PICKUP", 
     size = units.package_size(title)
     store_ok, store_reason = local_stock(n, store_id, fulfillment, session_store)
     in_stock = str(avail).upper() in {"IN_STOCK", "AVAILABLE"} or n.get("availabilityStatusDisplayValue") == "In stock"
-    ff = get_fulfillment(n)
-    # Only things you can have today or tomorrow, sold by Walmart. A store record saying
-    # "unavailable at your store" overrides any badge.
-    explicit_out = not store_ok and store_reason.startswith("Unavailable")
-    local = ff["ok"] and not explicit_out and (in_stock or not avail)
-    reason = store_reason if explicit_out else ff["label"]
+    ff = get_fulfillment(n, fulfillment)
+    # Both the chosen store/method and the delivery time must be verified.
+    local = store_ok and ff["ok"] and (in_stock or not avail)
+    reason = store_reason if not store_ok else ff["label"]
     confirmed = local
     return {
         "item_id": str(n["usItemId"]),
@@ -488,12 +486,6 @@ class WalmartBrowser:
             sample = next((n for n, p in zip(nodes, everything) if p["local_reason"].startswith(label)), None)
             if sample is not None:
                 log.info("search %r sample %r: %s", query, label, json.dumps(sample, default=str)[:3000])
-        if not listings:
-            # nothing confirmed: rather than an empty list, offer what Walmart itself sells, clearly marked
-            listings = [dict(p, local_available=True, local_reason="Couldn't confirm pickup or delivery")
-                        for p in everything if p["in_stock"] and not p["local_reason"].startswith(("Sold and shipped",
-                                                                                                    "Unavailable"))]
-            log.info("search %r: nothing confirmed, offering %d unconfirmed Walmart listings", query, len(listings))
         speed = {"today": 0, "tomorrow": 1}
         method = {"pickup": 0, "delivery": 1, "shipping": 2}
         listings.sort(key=lambda x: (x["sponsored"], speed.get(x["when"], 2), method.get(x["method"], 3)))

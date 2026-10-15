@@ -13,7 +13,7 @@ Every page shows the same three steps at the top:
 
 1. **Dinners**: photo cards of the coming dinners from Mealie. Tick the ones to shop for, swap one at random, choose a specific recipe, or fill empty days. Changes are written back to Mealie. The random picker uses recipes tagged "Dinner rotation" in Mealie and favors ones you haven't had in a while.
 2. **Check**: answers a few one-at-a-time questions ("How much soy sauce do you have?"), shows anything it couldn't find, and asks you to confirm newly found products. Change opens a sheet with quantity, things you've bought before, other options with photos and local-store badges, and a search.
-3. **Send to Walmart**: puts everything in your Walmart cart. You check out in Walmart yourself. The app notices the checkout on its own (it reads the cart every few hours) and updates the pantry estimate. Items can also be taken back out of the cart.
+3. **Send to Walmart**: puts everything in your Walmart cart. You check out in Walmart yourself. After buying the groceries, tap **I already checked out** in Grocer or confirm the phone notification to update the pantry estimate. An empty cart alone never counts as a purchase. Items can also be taken back out of the cart.
 
 Everything else (Walmart sign-in, order history, store, browsing speed, pantry, merging duplicate ingredients, cleaning up Mealie, emptying the cart, starting over) is on **Settings**.
 

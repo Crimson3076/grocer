@@ -289,7 +289,7 @@ function renderSent() {
       <div class="big-n">${r.added ?? lines.length} items · about ${money(r.estimated_total)}</div>
       <div class="sub">are in your Walmart cart</div>
       <p><a class="btn primary big" href="https://www.walmart.com/cart" target="_blank">Open Walmart to check out</a></p>
-      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}You'll get a notification once it sees you've checked out.</div>
+      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}After buying the groceries, tap I already checked out to update what you have at home.</div>
       <button class="link" onclick="checkedOut()">I already checked out</button>
       <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Take it back out of the cart</summary>
         <div class="actions" style="justify-content:center">

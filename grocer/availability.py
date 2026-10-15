@@ -187,10 +187,10 @@ def _when(text: str) -> str | None:
     return "later" if _LATER.search(text) else None
 
 
-def fulfillment(node: dict) -> dict:
+def fulfillment(node: dict, requested: str | None = None) -> dict:
     """How soon this listing can be had, from whatever Walmart put in its data.
 
-    ok is True only for pickup or delivery today/tomorrow (or shipping that arrives that soon),
+    ok is True only for pickup or delivery today/tomorrow,
     sold by Walmart itself. Marketplace sellers and anything with no such evidence are not ok."""
     seller = _seller(node)
     kind = str(node.get("fulfillmentType") or node.get("offerType") or "").upper()
@@ -201,6 +201,8 @@ def fulfillment(node: dict) -> dict:
 
     def offer(method: str, when: str | None, label: str) -> None:
         nonlocal best
+        if method == "shipping" or (requested and method != requested.lower()):
+            return
         if when not in {"today", "tomorrow"}:
             return
         cand = {"method": method, "when": when, "label": label}
@@ -223,7 +225,7 @@ def fulfillment(node: dict) -> dict:
                 ship_later = p.strip()
 
     # structured records without a day: pickup/delivery available at a store counts as today/tomorrow
-    if best is None:
+    if best is None and not any(_when(p) is not None for p in phrases):
         for field in ("fulfillmentOptions", "fulfillmentSummary"):
             for o in node.get(field) or []:
                 if not isinstance(o, dict):

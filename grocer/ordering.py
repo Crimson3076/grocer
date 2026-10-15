@@ -30,6 +30,14 @@ def fill(force: bool = False) -> dict:
     try:
         j.browser.ensure_logged_in()
         j.browser.ensure_store()
+        checked = {}
+
+        def live_item(iid):
+            iid = str(iid)
+            if iid not in checked:
+                checked[iid] = j.browser.item(iid)
+            return checked[iid]
+
         if run:
             plan = run["data"]
         else:
@@ -46,15 +54,8 @@ def fill(force: bool = False) -> dict:
                     continue
                 pick = item["pick"]
                 chosen = dict(pick)
-                saved = j.db.pick(item["key"])
-                if saved and str(saved["item_id"]) == str(pick["item_id"]) and j.recently_checked(item["key"], 7 * 24):
-                    plan["lines"].append(plan_line(item, chosen) or {})   # checked today; the cart read-back catches the rest
-                    if not plan["lines"][-1]:
-                        plan["lines"].pop()
-                        plan["carried"].append(item["key"])
-                    continue
                 j.progress(step=f"Checking {item['key']} is still available")
-                live = j.browser.item(pick["item_id"])
+                live = live_item(pick["item_id"])
                 if j.locally_available(live):
                     chosen.update({k: live[k] for k in ("local_available", "store_id", "fulfillment", "local_reason", "price") if k in live})
                 else:
@@ -63,6 +64,12 @@ def fill(force: bool = False) -> dict:
                 if not chosen or not j.locally_available(chosen):
                     plan["carried"].append(item["key"])
                     continue
+                if str(chosen["item_id"]) != str(pick["item_id"]):
+                    replacement = live_item(chosen["item_id"])
+                    if not j.locally_available(replacement):
+                        plan["carried"].append(item["key"])
+                        continue
+                    chosen = replacement
                 line = plan_line(item, chosen)
                 if not line:
                     plan["carried"].append(item["key"])
@@ -92,7 +99,11 @@ def fill(force: bool = False) -> dict:
                                    "Look at the Walmart cart and add anything missing by hand.")
             current = {}
         remaining = deficits(plan["targets"], current)
-        # no second product-page check here: reading the cart back afterwards shows anything that didn't go in
+        # Reuse checks from this fill, but never a previous run's availability.
+        # A retry keeps its saved quantities and refuses unavailable products.
+        for iid, _ in remaining:
+            if not j.locally_available(live_item(iid)):
+                raise RuntimeError("A product is no longer available at your store. Check the Walmart cart before retrying.")
         j.progress(step="Adding missing quantities to your Walmart cart")
         j.browser.add_to_cart(remaining)
         after = j.browser.cart_contents()

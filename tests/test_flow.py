@@ -1014,12 +1014,14 @@ def test_search_falls_back_when_typing_fails():
     """Typing into Walmart's search box is preferred, but any trouble there must not break searching."""
     from grocer.walmart import WalmartBrowser
     w = WalmartBrowser(Path("/tmp/none"))
+    w.store_id = "1234"
     went = []
     w._ready = lambda: None
     w._typed_search = lambda q: (_ for _ in ()).throw(RuntimeError("no search box"))
     w._goto = lambda url, ready=True: went.append((url, ready))
     w._next_data = lambda: {"props": {"pageProps": {"initialData": {"searchResult": {"itemStacks": [{"items": [
         {"usItemId": "42", "name": "Great Value Butter, 16 oz", "availabilityStatusV2": {"value": "IN_STOCK"},
+         "fulfillmentOptions": [{"type": "PICKUP", "storeId": "1234", "availabilityStatus": "IN_STOCK"}],
          "fulfillmentBadgeGroups": [{"text": "Pickup", "slaText": "today"}]}]}]}}}}}
     res = w._search("butter")
     assert went == [("https://www.walmart.com/search?q=butter", False)]

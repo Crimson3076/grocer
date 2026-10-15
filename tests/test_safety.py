@@ -50,6 +50,87 @@ def test_only_explicit_local_stock(options, session, mode, allowed):
     node = {"availabilityStatus": "IN_STOCK", "fulfillmentOptions": options}
     assert local_stock(node, "1234", mode, session)[0] is allowed
     assert local_stock(node, "", mode, session)[0] is False
+    listing = listing_from_node(dict(node, usItemId="5", name="Milk, 1 gallon"),
+                                store_id="1234", fulfillment=mode, session_store=session)
+    assert listing["local_available"] is allowed
+
+
+@pytest.mark.parametrize("extra,session", [
+    ({"fulfillmentOptions": [{"type": "PICKUP", "storeId": "9999", "availabilityStatus": "IN_STOCK"}]}, "1234"),
+    ({"fulfillmentOptions": [{"type": "PICKUP", "storeId": "1234", "availabilityStatus": "IN_STOCK"}]}, "9999"),
+    ({"fulfillmentOptions": [{"type": "DELIVERY", "storeId": "1234", "availabilityStatus": "IN_STOCK"}]}, "1234"),
+    ({"fulfillmentBadge": "Free shipping, arrives tomorrow", "sellerName": "Walmart.com"}, "1234"),
+    ({"fulfillmentBadge": "Pickup today"}, None),
+    ({"fulfillmentOptions": [{"type": "PICKUP", "storeId": "1234", "availabilityStatus": "IN_STOCK"}],
+      "fulfillmentBadge": "Pickup in 3 days"}, "1234"),
+])
+def test_listing_rejects_wrong_store_method_and_time(extra, session):
+    p = listing_from_node({"usItemId": "7", "name": "Milk", "availabilityStatus": "IN_STOCK", **extra},
+                          store_id="1234", fulfillment="PICKUP", session_store=session)
+    assert not p["local_available"] and not p["local_confirmed"]
+
+
+@pytest.mark.parametrize("fields", [
+    {}, {"local_available": False}, {"local_available": True},
+    {"local_available": True, "store_id": "9999", "fulfillment": "PICKUP"},
+    {"local_available": True, "store_id": "1234", "fulfillment": "DELIVERY"},
+])
+def test_unknown_and_mismatched_saved_picks_are_rejected(household, fields):
+    assert not jobs.locally_available({"item_id": "7", **fields})
+
+
+def test_search_never_promotes_unverified_results():
+    from pathlib import Path
+    from grocer.walmart import WalmartBrowser
+    w = WalmartBrowser(Path("/tmp/unused-grocer-profile"))
+    w.store_id = "1234"
+    w._ready = lambda: None
+    w._typed_search = lambda q: ({}, {"7": {
+        "usItemId": "7", "name": "Milk", "availabilityStatus": "IN_STOCK",
+        "fulfillmentBadge": "Pickup today"}})
+    assert w._search("milk") == []
+
+
+def test_recent_saved_pick_is_rechecked_before_cart_add(household):
+    c, browser, db = household
+    build(c)
+    iid = db.pick("corn tortilla")["item_id"]
+    assert jobs.recently_checked("corn tortilla", 7 * 24)
+    original = browser.item
+    checked = []
+
+    def item(key):
+        checked.append(key)
+        return dict(original(key), local_available=False) if key == iid else original(key)
+
+    browser.item = item
+    original_search = browser.search
+    browser.search = lambda q, limit=12: [] if q == "corn tortilla" else original_search(q, limit)
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert "corn tortilla" in result["carried"]
+    assert checked.count(iid) == 1
+    assert iid not in browser.cart_item_ids()
+
+
+def test_retry_rechecks_remaining_product_before_mutation(household):
+    c, browser, db = household
+    build(c)
+    original_add = browser.add_to_cart
+
+    def interrupted(lines):
+        original_add(lines[:1])
+        raise RuntimeError("interrupted")
+
+    browser.add_to_cart = interrupted
+    c.post("/api/cart?force=true&wait=true")
+    before = list(browser.carted)
+    browser.add_to_cart = original_add
+    original_item = browser.item
+    browser.item = lambda iid: dict(original_item(iid), local_available=False)
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert "no longer available" in result["failed"]
+    assert browser.carted == before
+    assert db.cart_run("2026-10-11")["state"] == "needs_check"
 
 
 def test_store_context_excludes_product_suggestions():
@@ -280,22 +361,22 @@ def test_invalid_numeric_inputs_are_rejected(household, path, body):
     assert c.post(path, json=body).status_code == 422
 
 
-def test_no_store_still_shops(household, monkeypatch):
+def test_no_store_does_not_offer_purchases(household, monkeypatch):
     c, browser, db = household
     monkeypatch.setattr(jobs.CONFIG, "walmart_store_id", "")
     review = build(c)
-    assert any(i["status"] == "buy" for i in review["items"])
+    assert not any(i["status"] == "buy" for i in review["items"])
 
 
 @pytest.mark.parametrize("extra,ok,label", [
     ({"fulfillmentBadgeGroups": [{"text": "Pickup", "slaText": "today"}, {"text": "Delivery", "slaText": "today"}]},
      True, "Pickup today"),
-    ({"fulfillmentBadgeGroups": [{"text": "Delivery", "slaText": "tomorrow"}]}, True, "Delivery tomorrow"),
+    ({"fulfillmentBadgeGroups": [{"text": "Delivery", "slaText": "tomorrow"}]}, False, "No pickup"),
     ({"badges": {"groups": [{"name": "fulfillment", "members": [{"key": "FF_PICKUP", "text": "Pickup in 2 hours"}]}]}},
      True, "Pickup today"),
     ({"fulfillmentSummary": [{"fulfillment": "PICKUP", "storeId": "1234", "availabilityStatus": "AVAILABLE"}]},
      True, "Pickup"),
-    ({"sellerName": "Walmart.com", "fulfillmentBadge": "Free shipping, arrives tomorrow"}, True, "Shipping, arrives tomorrow"),
+    ({"sellerName": "Walmart.com", "fulfillmentBadge": "Free shipping, arrives tomorrow"}, False, "No pickup"),
     ({"sellerName": "Jet Deals LLC", "fulfillmentBadgeGroups": [{"text": "Free shipping, arrives in 3 days"}]},
      False, "Sold and shipped by Jet Deals LLC"),
     ({"sellerName": "Grocery Outlet Co", "fulfillmentBadgeGroups": [{"text": "Pickup", "slaText": "today"}]},
@@ -307,11 +388,16 @@ def test_no_store_still_shops(household, monkeypatch):
 def test_only_today_or_tomorrow_from_walmart(extra, ok, label):
     node = {"usItemId": "5", "name": "French's Classic Yellow Mustard, 20oz (Pack of 48)",
             "availabilityStatusV2": {"value": "IN_STOCK"}, **extra}
-    p = listing_from_node(node, store_id="")
+    node["fulfillmentOptions"] = [{"type": "PICKUP", "storeId": "1234", "availabilityStatus": "IN_STOCK"}]
+    # The no-evidence case must not inherit the structured method from the other cases.
+    if not extra:
+        node.pop("fulfillmentOptions")
+    p = listing_from_node(node, store_id="1234", session_store="1234")
     assert p["local_available"] is ok
-    assert p["local_reason"].startswith(label)
+    if extra:
+        assert p["local_reason"].startswith(label)
     out = dict(node, availabilityStatusV2={"value": "OUT_OF_STOCK"})
-    assert not listing_from_node(out, store_id="")["local_available"]
+    assert not listing_from_node(out, store_id="1234", session_store="1234")["local_available"]
 
 
 def test_reset_does_not_change_stock_or_walmart_cart(household):
@@ -391,7 +477,7 @@ def test_one_button_send_confirm_and_choices(household):
     assert db.latest_review()["status"] == "carted"
 
 
-def test_checkout_noticed_when_cart_empties(household, monkeypatch):
+def test_empty_cart_needs_checkout_confirmation(household, monkeypatch):
     c, browser, db = household
     build(c)
     c.post("/api/send?wait=true")
@@ -403,9 +489,17 @@ def test_checkout_noticed_when_cart_empties(household, monkeypatch):
     assert jobs.check_checkout() == "asked"
     assert any("Did you check out" in t for t, _ in jobs.ha.sent)
     assert jobs.check_checkout() == "waiting"          # not asked again right away
-    # they checked out in Walmart: the cart no longer has our items
+    # Removing items is indistinguishable from checkout. Neither credits stock.
     browser.cart_contents = lambda: {}
-    assert jobs.check_checkout() == "checked_out"
+    assert jobs.check_checkout() == "waiting"  # the recent prompt is not repeated
+    assert db.latest_review()["status"] == "carted"
+    assert db.stock("corn tortilla") is None
+    db.run("DELETE FROM events WHERE kind LIKE 'checkout_asked:%'")
+    assert jobs.check_checkout() == "asked"
+    assert "no longer in the cart" in jobs.ha.sent[-1][1]
+    assert db.latest_review()["status"] == "carted"
+    assert db.stock("corn tortilla") is None
+    assert c.post("/api/checked-out").status_code == 200
     assert db.latest_review()["status"] == "checked_out"
     assert db.stock("corn tortilla") is not None
 

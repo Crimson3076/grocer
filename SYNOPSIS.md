@@ -9,7 +9,7 @@ Three screens, one button each, shown as steps at the top of every page:
 2. **Check**: only what needs a person is open. Questions come one at a time ("How much soy sauce do you have? Plenty / Running low / Out"), then anything not found at Walmart, then newly found products to confirm (✓ or Change, or "All look right"). "Going in the cart" (grouped by aisle) and "Already have" are collapsed. Change opens a sheet: quantity, things bought before, other options, a Walmart search, and plain switches (only this exact product, we always have this, don't buy this time).
 3. **Send to Walmart**: approves and fills the Walmart cart in one go. The screen then shows "N items, about $X are in your Walmart cart" with an Open Walmart button and anything that didn't make it.
 
-Checkout is always done by a person in Walmart. The app notices on its own: while an order sits in the cart it reads the Walmart cart every 3 hours, and when our items are gone it records the checkout (pantry stock credited) and says so. If they're still there after about a day it asks once by phone notification (Yes / Not yet). A Saturday schedule still exists: 3:05 PM plan empty dinner days, 5 PM build the list and notify, Sunday 8:45 AM fill the cart if the list was approved ("Or put it in the cart automatically Sunday morning").
+Checkout is always done by a person in Walmart. While an order sits in the cart, the app reads the Walmart cart every 3 hours. If our items are gone, it asks by phone whether checkout happened; it also asks after about a day. Removing items is not proof of a purchase. Only a person confirming checkout on the review page or phone notification credits pantry stock and marks dinners ordered. Prompts are limited to once per 20 hours for each review. A Saturday schedule still exists: 3:05 PM plan empty dinner days, 5 PM build the list and notify, Sunday 8:45 AM fill the cart if the list was approved ("Or put it in the cart automatically Sunday morning").
 
 Everything else (Walmart sign-in, order history, store, what we have, why a product was picked, merging duplicates, cleaning up Mealie, rebuilding, starting over) lives on a Settings page behind the gear.
 
@@ -53,11 +53,12 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
    2. Something from the household's own Walmart purchase history. History is read from My Items and Orders, with paging and with suggestion carousels filtered out. The AI judges whether a past purchase really is that item, using the recipe lines as context.
    3. A Walmart search, where the AI chooses among the results given the need, the household's usual brands, and anything they removed before.
 
-   Picks are saved and reused. Items Walmart explicitly lists as unavailable at the chosen store, or as ship-only, are excluded. When Walmart doesn't say either way, the item is kept and marked "not confirmed".
+   Picks are saved and reused for list building. Only verified availability at the configured store and pickup/delivery method counts. Shipping-only products, other stores, marketplace sellers, and unknown availability are excluded. Search never promotes unverified results to available.
 
 ## Filling the cart (durable and retry-safe)
 
 - The plan for the week and the target quantity per product are saved before anything is added.
+- Before a new fill, each chosen product is checked live at the configured store and method, including replacements. Each product is visited at most once per fill attempt. Retries also recheck products with missing quantities and stop before adding if any are unavailable.
 - The cart is read first, and only the missing quantities are added, using Walmart's multi-item link `affil.walmart.com/cart/addToCart?items=ID|QTY,...`.
 - The cart is read again afterwards to confirm.
 - If the cart can't be read on the first fill, the fill goes ahead and is marked unverified. A retry that can't read the cart refuses to add anything, so nothing is doubled.
@@ -80,7 +81,7 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 
 - Never place an order or pay.
 - Never count a cart addition as a purchase; only a confirmed checkout credits stock.
-- Walmart pacing is learned: at least the learned gap between page loads (randomized up to 1.8x), a break every 8 pages, an hourly cap derived from the gap, and a little scrolling on each page. A robot check multiplies the gap by 1.5 (max 60 s), except checks in the first 2 pages after a warm-up; every 15 clean page loads multiplies it by 0.85 (min 5 s). After 20 minutes idle it warms up from the home page, and searches are typed into the search box (URL search as a fallback). The learned gap is saved and survives restarts. Searches are cached 12 hours and saved picks checked within 7 days aren't reopened.
+- Walmart pacing is learned: at least the learned gap between page loads (randomized up to 1.8x), a break every 8 pages, an hourly cap derived from the gap, and a little scrolling on each page. A robot check multiplies the gap by 1.5 (max 60 s), except checks in the first 2 pages after a warm-up; every 15 clean page loads multiplies it by 0.85 (min 5 s). After 20 minutes idle it warms up from the home page, and searches are typed into the search box (URL search as a fallback). The learned gap is saved and survives restarts. Searches are cached 12 hours and saved picks checked within 7 days are reused while building the list. Cart fills use live availability checks, with the same pacing.
 - Browser work happens on one worker thread, because Playwright's sync API is bound to one thread; quick edits never wait on it.
 - A wrong merge is worse than a missed one: duplicate detection must be conservative and reviewable.
 - Keep everything local. Ports 8790 and 6080 are for the LAN only; the browser view has no password by the household's choice.

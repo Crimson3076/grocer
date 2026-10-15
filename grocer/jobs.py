@@ -57,16 +57,12 @@ def configure_browser() -> dict:
 
 
 def locally_available(pick: dict | None) -> bool:
-    """False only when we know it can't be bought: marked unavailable, or checked for a different store.
-    Picks saved before store checks existed (no reason recorded) still count."""
-    if not pick:
-        return False
-    if not pick.get("local_available") and pick.get("local_reason") is not None:
+    """Only explicit availability for the configured store and method counts."""
+    if not pick or not pick.get("local_available"):
         return False
     settings = walmart_settings()
-    if settings["store_id"] and pick.get("store_id") and str(pick["store_id"]) != settings["store_id"]:
-        return False
-    return True
+    return bool(settings["store_id"] and str(pick.get("store_id") or "") == settings["store_id"]
+                and pick.get("fulfillment") == settings["fulfillment"])
 
 
 def set_walmart_settings(store_id: str, fulfillment: str) -> None:
@@ -1168,8 +1164,7 @@ CHECKOUT_ASK_AFTER = 20 * 3600     # then ask on the phone if it still hasn't ha
 
 
 def check_checkout() -> str | None:
-    """If our items have left the Walmart cart, the order was checked out: record it.
-    Otherwise, after most of a day, ask once."""
+    """An empty cart can mean removal, so always ask a person to confirm checkout."""
     row = db.latest_review()
     if not row or row["status"] != "carted":
         return None
@@ -1178,21 +1173,19 @@ def check_checkout() -> str | None:
         return None
     targets = [str(i) for i in (run["data"].get("targets") or {})]
     contents = browser.cart_contents()
-    if contents is not None and targets and not any(contents.get(i) for i in targets):
-        checked_out()
-        ha.notify("Groceries checked out", "Got it. Pantry estimates are updated.", tag=STATUS_TAG,
-                  url=f"{CONFIG.public_url}/dinners")
-        log.info("cart emptied of our items: recorded the checkout")
-        return "checked_out"
+    empty = contents is not None and targets and not any(contents.get(i) for i in targets)
     since = (datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(run["updated"])).total_seconds()
-    asked = db.last_event("checkout_asked")
+    event = f"checkout_asked:{row['id']}"
+    asked = db.last_event(event)
     asked_age = (datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(asked)).total_seconds() if asked else None
-    if since > CHECKOUT_ASK_AFTER and (asked_age is None or asked_age > 20 * 3600):
-        ha.notify("Did you check out the groceries?", "They're still in the Walmart cart.", tag=STATUS_TAG,
+    if (empty or since > CHECKOUT_ASK_AFTER) and (asked_age is None or asked_age > CHECKOUT_ASK_AFTER):
+        message = ("The groceries are no longer in the cart. Confirm checkout only if you bought them."
+                   if empty else "Confirm checkout if you bought the groceries. Pantry estimates stay unchanged until you confirm.")
+        ha.notify("Did you check out the groceries?", message, tag=STATUS_TAG,
                   url=f"{CONFIG.public_url}/review",
                   actions=[{"action": "GROCER_DONE", "title": "Yes, checked out"},
                            {"action": "GROCER_NOTYET", "title": "Not yet"}])
-        db.log("checkout_asked")
+        db.log(event)
         return "asked"
     return "waiting"
 
