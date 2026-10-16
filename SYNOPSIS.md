@@ -64,6 +64,7 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 - The cart is read again afterwards to confirm. Undo removes a whole line only if its baseline was zero and its current quantity equals confirmed Grocer additions. Shared or changed lines are left for the person to adjust.
 - If the cart can't be read on the first fill, the fill goes ahead and is marked unverified. A retry that can't read the cart refuses to add anything, so nothing is doubled.
 - A product that has gone away is swapped for a similar one, with the package count recalculated; size changes that can't be converted are left out and reported.
+- Clicks bring their target into view and pause before and after interaction. History scrolling uses small steps instead of 5,000-pixel jumps. History pagination and post-challenge reloads respect the normal navigation throttle. Challenge pages are left for the person instead of being scrolled automatically.
 - Robot checks pause the job, notify everyone with an "Open browser" link, and continue when someone solves it. If nobody does, the list finishes without the remaining searches.
 
 ## Pages (phone-first, all refresh themselves)

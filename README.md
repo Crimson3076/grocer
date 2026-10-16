@@ -19,7 +19,7 @@ Everything else (Walmart sign-in, order history, store, browsing speed, pantry, 
 
 New cart fills reuse verified availability for the same product, store, and method for up to one hour, reducing repeat product-page visits. Old records are checked live once after upgrading. Retries check missing products live, and every fill reads back the cart quantities. Set `CART_AVAILABILITY_MINUTES=0` in `grocer.env` to always check live, or choose a shorter window up to 60 minutes. Availability can still change before checkout.
 
-Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
+Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
 
 ## Setup
 

@@ -249,7 +249,7 @@ class WalmartBrowser:
         self._loads.append(time.time())
 
     def per_hour(self) -> int:
-        """The hourly cap follows the learned gap (about 40 an hour at the default 12 seconds)."""
+        """The hourly cap follows the learned gap (120 an hour at the default 12 seconds)."""
         return int(min(120, max(12, 3600 / (self.min_gap * 1.3) / 1.8)))
 
     def pace(self) -> dict:
@@ -288,6 +288,23 @@ class WalmartBrowser:
         except Exception:  # noqa: BLE001  never let this break a page load
             pass
 
+    def _click(self, target, timeout: int = 5000) -> None:
+        """Bring the target into view and leave time before and after a click."""
+        self._wait_out_challenge()
+        target.scroll_into_view_if_needed(timeout=timeout)
+        self._pause(0.5)
+        target.click(timeout=timeout)
+        self._pause(0.5)
+
+    def _scroll_history(self, distance: int = 5000) -> None:
+        """Read down a history page in small steps instead of one large jump."""
+        remaining = distance
+        while remaining > 0:
+            step = min(remaining, random.randint(350, 650))
+            self._page.mouse.wheel(0, step)
+            remaining -= step
+            self.sleep(random.uniform(0.3, 0.7))
+
     def _ready(self) -> None:
         """Pace the next page, and after a while away start from the home page like a person would."""
         self.open()
@@ -297,8 +314,8 @@ class WalmartBrowser:
             self._page.goto(BASE, wait_until="domcontentloaded", timeout=60_000)
             self._since_warm = 0
             self.sleep(random.uniform(3, 7))
-            self._browse_like_a_person()
             self._wait_out_challenge()
+            self._browse_like_a_person()
             self._warmed = True
             self._throttle()
 
@@ -306,8 +323,8 @@ class WalmartBrowser:
         self._last_load = time.time()
         self._since_warm += 1
         self._pause(0.6)
-        self._browse_like_a_person()
         if not self._is_challenge():
+            self._browse_like_a_person()
             self._learn(hit_check=False)
 
     def _goto(self, url: str, ready: bool = True) -> None:
@@ -316,9 +333,10 @@ class WalmartBrowser:
         self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         self._arrived()
         if self._wait_out_challenge():
-            # solved: load what we actually wanted
+            # A solved challenge does not bypass the normal navigation pace.
+            self._throttle()
             self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            self._pause(0.6)
+            self._arrived()
             if self._is_challenge():
                 raise BrowserChallenge(self._page.url)
 
@@ -428,8 +446,9 @@ class WalmartBrowser:
 
         self._page.on("response", handler)
         try:
-            box.click(timeout=5_000)
+            self._click(box)
             box.fill("")
+            self._pause(0.25)
             box.type(query, delay=random.randint(70, 160))
             self.sleep(random.uniform(0.4, 1.0))
             box.press("Enter")
@@ -531,12 +550,14 @@ class WalmartBrowser:
                     el = loc.nth(i)
                     if not el.is_visible() or el.get_attribute("aria-disabled") == "true" or not el.is_enabled():
                         continue
-                    el.scroll_into_view_if_needed(timeout=5000)
-                    el.click(timeout=5000)
+                    self._throttle()
+                    self._click(el)
                     page.wait_for_load_state("domcontentloaded", timeout=30_000)
-                    self._pause(1.2)
+                    self._arrived()
                     self._wait_out_challenge()
                     return True
+            except BrowserChallenge:
+                raise
             except Exception:  # noqa: BLE001
                 continue
         return False
@@ -571,13 +592,15 @@ class WalmartBrowser:
                         self.on_progress(f"Reading {label}, page {current}")
                     page_before = len(found)
                     for _ in range(scrolls):
-                        self._page.mouse.wheel(0, 5000)
-                        self._pause(0.4)
+                        self._wait_out_challenge()
+                        self._scroll_history()
                         more = self._page.get_by_role("button", name=re.compile(r"(load|show|view) more", re.I))
                         try:
                             if more.count() and more.first.is_visible():
-                                more.first.click(timeout=5000)
-                                self._pause(0.6)
+                                self._click(more.first)
+                                self._wait_out_challenge()
+                        except BrowserChallenge:
+                            raise
                         except Exception:  # noqa: BLE001
                             pass
                     _walk_paths(self._next_data(), found, origins, ("page",))
@@ -661,9 +684,8 @@ class WalmartBrowser:
                 log.warning("Walmart cart: %s won't come out; stopping", iid)
                 break
             btn = self._page.locator("[data-grocer-remove='1']").first
-            btn.scroll_into_view_if_needed(timeout=5_000)
-            self.sleep(random.uniform(0.6, 1.4))
-            btn.click(timeout=10_000)
+            self._click(btn, timeout=10_000)
+            self._wait_out_challenge()
             if iid not in removed:
                 removed.append(iid)
             if wanted is not None and iid in wanted:
