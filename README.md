@@ -17,7 +17,9 @@ Every page shows the same three steps at the top:
 
 Everything else (Walmart sign-in, order history, store, browsing speed, pantry, merging duplicate ingredients, cleaning up Mealie, emptying the cart, starting over) is on **Settings**.
 
-New cart fills reuse verified availability for the same product, store, and method for up to one hour, reducing repeat product-page visits. Old records are checked live once after upgrading. Retries check missing products live, and every fill reads back the cart quantities. Set `CART_AVAILABILITY_MINUTES=0` in `grocer.env` to always check live, or choose a shorter window up to 60 minutes. Availability can still change before checkout.
+Saved products previously verified at your selected store and pickup/delivery method go straight into the cart, even when their last check is old. Grocer then reads the cart to flag missing quantities, unavailable or shipping items, and unclear pickup/delivery availability. Unclear results remain marked for review, and interrupted trips require explicit purchased quantities before recording checkout. New products and missing products on retry still get live checks. Nothing is purchased automatically.
+
+Set `CART_VERIFY_AFTER_ADD=false` in `grocer.env` to restore checks before adding. In that mode, `CART_AVAILABILITY_MINUTES` controls the recent-check window (0 to 60 minutes).
 
 Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
 

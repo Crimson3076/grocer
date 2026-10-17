@@ -58,11 +58,14 @@ def fill(force: bool = False) -> dict:
         def live_item(iid):
             iid = str(iid)
             if iid not in checked:
-                cached = None if run else cached_availability(
-                    j.db, iid, j.locally_available, j.CONFIG.cart_availability_minutes, j.walmart_settings())
+                saved = j.db.one("SELECT * FROM picks WHERE item_id=? AND local_available=1 AND store_id=? AND fulfillment=? LIMIT 1",
+                                 iid, j.walmart_settings()["store_id"], j.walmart_settings()["fulfillment"])
+                cached = dict(saved) if not run and j.CONFIG.cart_verify_after_add and saved else None
+                cached = cached or (None if run else cached_availability(
+                    j.db, iid, j.locally_available, j.CONFIG.cart_availability_minutes, j.walmart_settings()))
                 if cached:
                     checked[iid] = cached
-                    j.log.info("Cart availability: reusing recent store check for %s", iid)
+                    j.log.info("Cart availability: reusing saved store product for %s", iid)
                 else:
                     checked[iid] = j.browser.item(iid)
                     live = checked[iid]
@@ -81,7 +84,7 @@ def fill(force: bool = False) -> dict:
             plan = run["data"]
         else:
             plan = {"lines": [], "swaps": [], "carried": [], "unanswered": [], "no_pick": [],
-                    "store": j.walmart_settings()}
+                    "store": j.walmart_settings(), "verify_after_add": j.CONFIG.cart_verify_after_add}
             for item in data["items"]:
                 if item["status"] == "check":
                     plan["unanswered"].append(item["key"])
@@ -141,7 +144,7 @@ def fill(force: bool = False) -> dict:
                                    "Look at the Walmart cart and add anything missing by hand.")
             current = {}
         remaining = deficits(plan["targets"], current)
-        # Reuse recent observations on new fills; retries always check live.
+        # Reuse saved store products on new fills; retries check only missing quantities live.
         # A retry keeps its saved quantities and refuses unavailable products.
         for iid, _ in remaining:
             if not j.locally_available(live_item(iid)):
@@ -151,17 +154,40 @@ def fill(force: bool = False) -> dict:
         j.progress(step="Adding missing quantities to your Walmart cart")
         j.browser.add_to_cart(remaining)
         after = j.browser.cart_contents()
+        plan.pop("unverified", None)
+        plan["fulfillment_unverified"] = []
+        plan["cart_issues"] = {}
         if after is None:
             plan["unverified"] = True
-            missing = []      # sent, but we can't see the cart to confirm; the message says to check it
+            missing = []      # Sent, but unconfirmed until the person checks Walmart.
+            plan["fulfillment_unverified"] = list(plan["targets"])
         else:
             missing = [iid for iid, _ in deficits(plan["targets"], after)]
+        if after is not None and plan.get("verify_after_add"):
+            checks = getattr(j.browser, "last_cart_checks", {})
+            for iid in plan["targets"]:
+                if iid in missing:
+                    continue
+                check = checks.get(iid, {})
+                if check.get("available") is False:
+                    missing.append(iid)
+                    plan["cart_issues"][iid] = check.get("reason", "Walmart could not fulfill this item")
+                    j.db.run("UPDATE picks SET local_available=0, availability_checked_at=NULL WHERE item_id=?", iid)
+                elif check.get("available") is not True:
+                    plan["fulfillment_unverified"].append(iid)
+                else:
+                    j.db.run("UPDATE picks SET availability_checked_at=? WHERE item_id=? AND store_id=? AND fulfillment=?",
+                             now_iso(), iid, j.walmart_settings()["store_id"], j.walmart_settings()["fulfillment"])
+            if plan["fulfillment_unverified"]:
+                plan["unverified"] = True
+        if plan.get("unverified"):
+            plan["verification_note"] = ("Check the quantities and pickup or delivery availability in Walmart before checkout.")
         if after is not None and plan.get('cart_before') is not None:
             added = plan.setdefault('added_quantities', {})
             for iid, qty in remaining:
                 confirmed = min(qty, max(after.get(iid, 0) - current.get(iid, 0), 0))
                 added[iid] = added.get(iid, 0) + confirmed
-        state = "partial" if missing else "carted"
+        state = "partial" if missing or plan.get("unverified") else "carted"
         plan.pop("error", None)
         plan["missing"] = missing
         plan["added"] = sum(1 for line in plan["lines"] if str(line["pick"]["item_id"]) not in missing)
@@ -177,12 +203,12 @@ def fill(force: bool = False) -> dict:
         j.db.update_review(review_id, data=data, status=state)
         j.db.log("carted", id=review_id, missing=missing, swaps=plan["swaps"])
         j.ha.clear(j.REVIEW_TAG)
-        msg = (f"{plan['added']} grocery lines sent to your Walmart cart. The cart couldn't be read back, so give it a look before checking out."
+        msg = (f"{plan['added']} grocery lines sent to your Walmart cart. Check quantities and pickup or delivery availability before checking out."
                if plan.get("unverified") else
                f"{plan['added']} grocery lines verified in your Walmart cart. Review it and check out manually.")
-        if missing or plan["unresolved"]:
-            msg += f" {len(missing) + len(plan['unresolved'])} items need attention on the review page."
-        j.ha.notify("Grocery cart needs review" if missing or plan["unresolved"] else "Grocery cart is ready",
+        if missing or plan["unresolved"] or plan.get("unverified"):
+            msg += f" {len(missing) + len(plan['unresolved']) + len(plan.get('fulfillment_unverified', []))} items need attention on the review page."
+        j.ha.notify("Grocery cart needs review" if missing or plan["unresolved"] or plan.get("unverified") else "Grocery cart is ready",
                     msg, tag=j.STATUS_TAG, url=f"{j.CONFIG.public_url}/review",
                     actions=[{"action": "URI", "title": "Open cart", "uri": "https://www.walmart.com/cart"},
                              {"action": "GROCER_DONE", "title": "Checked out"}])
@@ -241,6 +267,7 @@ def confirm_checkout(quantities: dict[str, int] | None = None, manual_keys: list
                 pantry.credit(c, purchased, row['trip_id'])
                 bought_lines.append(purchased)
         plan['purchased_lines'] = bought_lines
+        plan['fulfillment_unverified'] = []
         actual = {line['key']: line['qty'] for line in bought_lines}
         plan['missing'] = [iid for iid in plan.get('missing', []) if any(
             str(line['pick']['item_id']) == str(iid) and actual.get(line['key'], 0) < line['qty']

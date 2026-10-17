@@ -91,7 +91,8 @@ def test_search_never_promotes_unverified_results():
     assert w._search("milk") == []
 
 
-def test_legacy_saved_pick_is_rechecked_before_cart_add(household):
+def test_legacy_saved_pick_is_rechecked_before_cart_add(household, monkeypatch):
+    monkeypatch.setattr(jobs.CONFIG, "cart_verify_after_add", False)
     c, browser, db = household
     build(c)
     iid = db.pick("corn tortilla")["item_id"]
@@ -424,7 +425,8 @@ def test_voice_restock_for_an_existing_staple_looks_up_a_product(household):
     assert salt["status"] == "buy" and salt["pick"]["local_available"]
 
 
-def test_revalidation_removes_an_unavailable_saved_pick(household):
+def test_revalidation_removes_an_unavailable_saved_pick(household, monkeypatch):
+    monkeypatch.setattr(jobs.CONFIG, "cart_verify_after_add", False)
     c, browser, db = household
     build(c)
     db.run("UPDATE picks SET updated='2020-01-01T00:00:00+00:00' WHERE key='corn tortilla'")
@@ -591,6 +593,7 @@ def test_saving_a_cached_pick_does_not_extend_availability(household):
 def test_cart_cache_can_be_disabled(household, monkeypatch):
     c, browser, _ = household
     build(c)
+    monkeypatch.setattr(jobs.CONFIG, "cart_verify_after_add", False)
     monkeypatch.setattr(jobs.CONFIG, "cart_availability_minutes", 0)
     checked = []
     original = browser.item
@@ -616,7 +619,8 @@ def test_49_verified_items_need_no_product_page_visits(household):
         db.save_pick(item["key"], item["pick"], True)
         data["items"].append(item)
     db.update_review(row["id"], data=data)
-    browser.item = lambda iid: pytest.fail("Verified product was reopened")
+    db.run("UPDATE picks SET updated='2020-01-01T00:00:00+00:00', availability_checked_at=NULL")
+    browser.item = lambda iid: pytest.fail("Saved product was reopened")
     result = c.post("/api/cart?force=true&wait=true").json()
     assert result["added"] == 49
     assert len(browser.cart_item_ids()) == 49

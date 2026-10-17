@@ -277,6 +277,7 @@ function renderSent() {
   const lines = r.lines || [];
   const problems = (r.unresolved || [...(r.carried || []), ...(r.unanswered || []), ...(r.no_pick || [])]).filter(k=>!(r.manual_purchases || []).includes(k));
   const missingIds = r.missing || [];
+  const uncertainIds = r.fulfillment_unverified || [];
   let h = steps(R.status === "checked_out" ? 4 : 3);
   if (R.status === "checked_out") {
     h += `<div class="card done"><div style="font-size:40px">🎉</div><div class="big-n">Purchase recorded</div>
@@ -290,9 +291,9 @@ function renderSent() {
   } else {
     h += `<div class="card done"><div style="font-size:40px">🛒</div>
       <div class="big-n">${r.added ?? lines.length} grocery lines ${r.unverified ? 'sent' : 'confirmed'}</div>
-      <div class="sub">${missingIds.length + problems.length} item${missingIds.length + problems.length===1?' needs':'s need'} attention · planned total about ${money(r.estimated_total)}</div>
+      <div class="sub">${missingIds.length + problems.length + uncertainIds.length} item${missingIds.length + problems.length + uncertainIds.length===1?' needs':'s need'} attention · planned total about ${money(r.estimated_total)}</div>
       <p><a class="btn primary big" href="https://www.walmart.com/cart" target="_blank">Open Walmart to check out</a></p>
-      <div class="small">${r.unverified ? "The cart couldn't be read back, so give it a quick look. " : ""}After buying the groceries, tap Confirm what I bought to update your pantry estimate.</div>
+      <div class="small">${r.unverified ? esc(r.verification_note || "Check quantities and pickup or delivery availability in Walmart. ") : ""} After buying the groceries, tap Confirm what I bought to update your pantry estimate.</div>
       <button class="link" onclick="checkedOut()">Confirm what I bought</button>
       <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Take it back out of the cart</summary>
         <div class="actions" style="justify-content:center">
@@ -300,12 +301,18 @@ function renderSent() {
           <button onclick="clearCart('all')">Everything in the cart</button></div></details></div>`;
   }
   if (problems.length || missingIds.length) {
-    h += `<h2>Didn't go in the cart</h2><div class="card">`;
+    h += `<h2>Needs attention</h2><div class="card">`;
     for (const k of problems) h += `<div class="line"><div class="grow"><div class="name">${esc(k)}</div><div class="small">${R.status === 'checked_out' ? 'Saved for the next trip' : r.decisions?.[k] === 'manual' ? 'Buying this yourself; confirm it after checkout' : r.decisions?.[k] === 'later' ? 'Saved for the next trip' : 'Choose what happens next'}</div>
       ${R.status !== 'checked_out' ? `<a class="btn" href="https://www.walmart.com/search?q=${encodeURIComponent(k)}" target="_blank" rel="noopener" onclick="act('/api/trip/decision',{key:${J(k)},decision:'manual'})">Buy myself</a> <button onclick="act('/api/trip/decision',{key:${J(k)},decision:'later'})">Next trip</button> <button onclick="reopenFor(${J(k)})">Choose another</button>` : ''}</div></div>`;
     for (const id of missingIds) { const l = lines.find(x => String(x.pick.item_id) === String(id));
-      h += `<div class="line">${thumb(l?.pick)}<div class="grow"><div class="name">${esc(l?.key || id)}</div><div class="small">Walmart didn't take it</div></div></div>`; }
+      h += `<div class="line">${thumb(l?.pick)}<div class="grow"><div class="name">${esc(l?.key || id)}</div><div class="small">${esc(r.cart_issues?.[id] || "Walmart did not accept the full quantity")}</div></div>${l && R.status !== "checked_out" ? `<button onclick="reopenFor(${J(l.key)})">Choose another</button>` : ""}</div>`; }
     if (missingIds.length && R.status !== "checked_out") h += `<div class="actions"><button onclick="startJob('/api/send')">Try those again</button></div>`;
+    h += `</div>`;
+  }
+  if (uncertainIds.length && R.status !== "checked_out") {
+    h += `<h2>Check in Walmart</h2><div class="card"><p class="small">Check these items in Walmart. Their quantities or pickup/delivery availability could not be confirmed.</p>`;
+    for (const id of uncertainIds) { const l = lines.find(x => String(x.pick.item_id) === String(id));
+      h += `<div class="line">${thumb(l?.pick)}<div class="grow"><div class="name">${esc(l?.key || id)}</div></div></div>`; }
     h += `</div>`;
   }
   if (r.swaps?.length) h += `<h2>Swapped</h2><div class="card small">${r.swaps.map(esc).join("<br>")}</div>`;

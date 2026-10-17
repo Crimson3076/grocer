@@ -58,7 +58,7 @@ def coverage(review: dict, plan: dict) -> list[dict]:
     missing = set(
         plan.get("carried", []) + plan.get("unanswered", []) + plan.get("no_pick", [])
     )
-    missing_ids = set(map(str, plan.get("missing", [])))
+    missing_ids = set(map(str, plan.get("missing", []) + plan.get("fulfillment_unverified", [])))
     missing.update(
         l["key"]
         for l in plan.get("lines", [])

@@ -77,11 +77,7 @@ def local_stock(node: dict, store_id: str, fulfillment: str, session_store: str 
     return False, f"Local {mode.lower()} availability could not be verified for store #{store_id}"
 
 
-def cart_quantities(data: dict) -> dict[str, int] | None:
-    """Read explicit cart line items, never recommendation IDs from the whole page.
-
-    None means unverifiable. {} is a positively identified empty cart.
-    """
+def _cart_roots(data: dict) -> list[dict]:
     carts = []
 
     def find(node):
@@ -98,6 +94,15 @@ def cart_quantities(data: dict) -> dict[str, int] | None:
                 find(child)
 
     find(data)
+    return carts
+
+
+def cart_quantities(data: dict) -> dict[str, int] | None:
+    """Read explicit cart line items, never recommendation IDs from the whole page.
+
+    None means unverifiable. {} is a positively identified empty cart.
+    """
+    carts = _cart_roots(data)
     if not carts:
         return None
     snapshots = []
@@ -139,6 +144,64 @@ def cart_quantities(data: dict) -> dict[str, int] | None:
         snapshots.append(totals)
     # Conflicting snapshots indicate stale or ambiguous cart data.
     return snapshots[0] if all(s == snapshots[0] for s in snapshots) else None
+
+
+def cart_item_checks(data: dict, store_id: str, mode: str) -> dict[str, dict]:
+    """Inspect only real cart lines. Presence alone does not establish local stock."""
+    observations: dict[str, list[dict]] = {}
+    session = selected_store(data, mode)
+    context_keys = {"storeId", "fulfillmentType", "fulfillmentMethod", "accessType"}
+
+    def walk(node, inherited):
+        if isinstance(node, list):
+            for child in node:
+                walk(child, inherited)
+        elif isinstance(node, dict):
+            context = dict(inherited, **{k: v for k, v in node.items() if k in context_keys})
+            product = node.get("product") if isinstance(node.get("product"), dict) else {}
+            iid = node.get("usItemId") or product.get("usItemId")
+            if iid is not None and "quantity" in node:
+                combined = {**context, **product, **node}
+                status = value(combined.get("availabilityStatusV2") or combined.get("availabilityStatus"))
+                kind = value(context.get("fulfillmentType") or product.get("fulfillmentType"))
+                method = value(context.get("fulfillmentMethod") or context.get("accessType")
+                               or product.get("fulfillmentMethod") or product.get("accessType"))
+                reason, available = "Check pickup or delivery availability in Walmart", None
+                if status in {"OUT_OF_STOCK", "UNAVAILABLE", "NOT_AVAILABLE"} or combined.get("isAvailable") is False:
+                    available, reason = False, "Walmart says this item is unavailable"
+                elif combined.get("isMarketplaceItem") or value(combined.get("offerType")) in {"MARKETPLACE", "ONLINE_ONLY"}:
+                    available, reason = False, "This cart item is from another seller"
+                elif kind in {"SHIPPING", "SHIP", "FC"} or method in {"SHIPPING", "SHIP", "FC"}:
+                    available, reason = False, "This cart item is set to shipping"
+                elif kind in {"PICKUP", "DELIVERY"} and kind != mode:
+                    available, reason = False, "This cart item uses a different pickup or delivery method"
+                elif (session and session != store_id) or (context.get("storeId") and str(context["storeId"]) != store_id):
+                    available, reason = False, "The cart is using a different store"
+                else:
+                    if kind == mode and context.get("storeId"):
+                        combined["fulfillmentOptions"] = [{"type": kind, "storeId": context["storeId"],
+                                                           "availabilityStatus": status or "AVAILABLE",
+                                                           "fulfillmentMethod": method}]
+                    local, local_reason = local_stock(combined, store_id, mode, session)
+                    timing = fulfillment(combined, mode)
+                    if local and timing["ok"]:
+                        available, reason = True, timing["label"]
+                    elif "only ships" in local_reason or "Unavailable for" in local_reason or (timing.get("seller") and "walmart" not in timing["seller"].lower()):
+                        available, reason = False, timing["label"] if timing.get("seller") and "walmart" not in timing["seller"].lower() else local_reason
+                observations.setdefault(str(iid), []).append({"available": available, "reason": reason})
+                return
+            for key, child in node.items():
+                if not re.search(r"recommend|sponsor|carousel|similar|p13n", key, re.I):
+                    walk(child, context)
+
+    for cart in _cart_roots(data):
+        walk(cart, {})
+    result = {}
+    for iid, entries in observations.items():
+        rejected = next((e for e in entries if e["available"] is False), None)
+        result[iid] = rejected or (entries[0] if all(e["available"] is True for e in entries)
+                                  else {"available": None, "reason": "Check pickup or delivery availability in Walmart"})
+    return result
 
 
 # ---------------------------------------------------------------- can we get it today or tomorrow?

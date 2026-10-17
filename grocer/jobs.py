@@ -520,7 +520,7 @@ def _pick_for(key: str, need: planner.Need) -> tuple[dict | None, list[dict], bo
     configure_browser()
     row = db.pick(key)
     if row:
-        if locally_available(dict(row)) and row["updated"] and (datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(row["updated"])).total_seconds() < RECHECK_AFTER:
+        if locally_available(dict(row)) and (CONFIG.cart_verify_after_add or (row["updated"] and (datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(row["updated"])).total_seconds() < RECHECK_AFTER)):
             return dict(row), [], not row["approved"]
         db.run("UPDATE picks SET local_available=0 WHERE key=?", key)
         live = browser.item(row["item_id"])

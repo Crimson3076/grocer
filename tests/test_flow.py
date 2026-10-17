@@ -126,6 +126,14 @@ class FakeBrowser:
         result = {}
         for iid, qty in self.carted:
             result[iid] = result.get(iid, 0) + qty
+        self.last_cart_checks = {}
+        for iid in result:
+            product = self.catalog.get(iid)
+            if product is None:
+                row = jobs.db.one("SELECT * FROM picks WHERE item_id=?", iid)
+                product = dict(row) if row else {}
+            self.last_cart_checks[iid] = {"available": jobs.locally_available(product),
+                                          "reason": "Unavailable" if not jobs.locally_available(product) else "Pickup"}
         return result
 
     def close(self):
@@ -227,6 +235,7 @@ def test_weekly_flow(monkeypatch):
 
 
 def test_deleted_and_out_of_stock(monkeypatch):
+    monkeypatch.setattr(jobs.CONFIG, "cart_verify_after_add", False)
     b = FakeBrowser()
     monkeypatch.setattr(jobs, "mealie", FakeMealie())
     monkeypatch.setattr(jobs, "llm", FakeLLM())

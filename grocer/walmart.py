@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from . import units
-from .availability import cart_quantities, describe_keys, local_stock, selected_store
+from .availability import cart_item_checks, cart_quantities, describe_keys, local_stock, selected_store
 from .availability import fulfillment as get_fulfillment
 from .db import now_iso
 
@@ -711,4 +711,6 @@ class WalmartBrowser:
     def cart_contents(self) -> dict[str, int] | None:
         self._goto(f"{BASE}/cart")
         self._pause(1.0)
-        return cart_quantities(self._next_data())
+        data = self._next_data()
+        self.last_cart_checks = cart_item_checks(data, self.store_id, self.fulfillment)
+        return cart_quantities(data)
