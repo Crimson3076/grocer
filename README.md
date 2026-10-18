@@ -128,3 +128,20 @@ python3 -m pytest -q tests
 ```
 
 They use fake Mealie, Walmart, Ollama and Home Assistant services and never touch the real ones. GitHub Actions runs them on every push and pull request, and only publishes a new image when they pass.
+
+## Meal costs and removing a trip
+
+Dinner cards show saved-price estimates after that recipe has appeared in a built list.
+The review and sent-cart screens include estimated meal totals and cost per serving.
+These price the ingredient quantities used, including pantry ingredients, rather than
+charging each dinner for whole packages. Tax and fees are excluded. Missing prices,
+unclear quantities, recipe yields, and uncertain weighted pricing are labeled incomplete.
+Dinner cards use previous recipe estimates and scale them to the chosen servings.
+
+Use **Remove what Grocer added** on the sent-cart screen to remove unchanged lines
+owned entirely by the current trip. Existing, shared, or manually changed lines stay.
+Review the in-page confirmation before proceeding.
+
+Fully cached lists no longer import order history automatically. A first-time build with no saved products can still import history;
+later history imports are explicit in Settings, even when some new products need finding. Cart filling combines sign-in, store, and starting
+quantity checks into one cart visit. Existing browser pacing remains in effect.

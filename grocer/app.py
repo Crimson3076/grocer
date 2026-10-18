@@ -169,6 +169,8 @@ def get_review():
     if not row:
         return {"status": "none"}
     data = json.loads(row["data"])
+    from .costs import meal_costs
+    data["meal_costs"] = meal_costs(data)
     next_cart = scheduler.get_job("cart")
     return {**data, "id": row["id"], 'trip_id': row['trip_id'], "status": row["status"], "summary": jobs.summary(data),
             "levels": list(planner.STOCK_LEVELS), "vnc_url": CONFIG.vnc_url,

@@ -79,3 +79,19 @@ def test_click_stops_when_challenge_is_unresolved():
     target = SimpleNamespace(scroll_into_view_if_needed=lambda **kw: pytest.fail("Scrolled while blocked"))
     with pytest.raises(BrowserChallenge):
         w._click(target)
+
+
+def test_prepare_cart_checks_store_and_login_without_extra_navigation():
+    from grocer.walmart import LoginRequired
+    w = browser()
+    w.store_id = "1234"
+    w._page = SimpleNamespace(url="https://www.walmart.com/cart")
+    w._last_cart_data = {"selectedStore": {"storeId": "1234"}}
+    w.cart_contents = lambda: {"7": 2}
+    assert w.prepare_cart() == {"7": 2}
+    w._last_cart_data = {"selectedStore": {"storeId": "9999"}}
+    with pytest.raises(RuntimeError, match="different store"):
+        w.prepare_cart()
+    w._page.url = "https://www.walmart.com/account/login"
+    with pytest.raises(LoginRequired):
+        w.prepare_cart()

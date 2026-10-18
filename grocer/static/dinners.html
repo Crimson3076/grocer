@@ -142,6 +142,8 @@ function card(m) {
     </div>
     <div class="body">
       <div class="name">${m.url ? `<a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a>` : esc(m.name)}</div>
+      <div class="small">${m.cost?.complete ? `About $${m.cost.total.toFixed(2)} total · $${m.cost.per_serving.toFixed(2)} / serving` : m.cost ? `Known ingredients: $${m.cost.known_total.toFixed(2)} · estimate incomplete` : 'Cost available after building a list'}</div>
+      ${m.cost ? `<div class="small">Saved-price estimate${m.cost.estimated_at ? ` · ${esc(m.cost.estimated_at.slice(0,10))}` : ''}</div>` : ''}
       ${m.ordered ? "" : `
       <div class="serv"><span class="grow small">Serves</span>
         <button aria-label="Fewer" onclick="servings(${J(m)}, -1)">−</button><b>${m.servings % 1 ? m.servings : Math.round(m.servings)}</b>

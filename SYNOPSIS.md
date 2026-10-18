@@ -137,3 +137,22 @@ Setup checks are requested by the person, not run on every poll. They check
 Mealie credentials, Ollama's configured model, optional Home Assistant access,
 chosen store, and the last known Walmart session. Docker health is deliberately
 a lightweight liveness check. Version and build revision are shown in Settings.
+
+## Meal estimates and fewer browser visits (0.2.4)
+
+`costs.py` prices per-meal physical usage against saved product package size and price.
+Pantry stock and rounded shopping quantities do not reduce or inflate ingredient usage
+cost. Unknown price, size, usage, yield, or weighted-item price basis makes the total
+and per-serving amount incomplete; the known subtotal is shown separately.
+Review responses calculate costs from their current item snapshots. Dinner cards use
+the most recent saved review per recipe (up to 100 reviews) and scale to planned servings.
+These are saved-price recipe estimates, not live prices or guarantees about recipe edits.
+They need no additional Walmart, Mealie, or model requests.
+
+Cached-only builds skip sign-in and stale order-history imports, including scheduled
+builds; pantry staples already on hand do not force history import. Only an initial build with no saved picks can import history first; later imports
+are explicit in Settings. Real-browser cart fills use one cart visit for login,
+store context, and baseline quantities, then the existing bulk additions and read-back.
+The sent-cart screen exposes a Remove what Grocer added button with an in-page dialog.
+The ownership guards still preserve shared/changed lines; unverified partial removals
+do not become a falsely verified cart.

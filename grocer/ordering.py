@@ -51,8 +51,12 @@ def fill(force: bool = False) -> dict:
     if not run and data.get("week_end", week) < j.today().isoformat():
         raise RuntimeError("Those dinners are already past. Update the list first.")
     try:
-        j.browser.ensure_logged_in()
-        j.browser.ensure_store()
+        prepared = hasattr(j.browser, "prepare_cart")
+        if prepared:
+            starting_cart = j.browser.prepare_cart()
+        else:
+            j.browser.ensure_logged_in()
+            j.browser.ensure_store()
         checked = {}
 
         def live_item(iid):
@@ -121,7 +125,7 @@ def fill(force: bool = False) -> dict:
                     if live is None:
                         j.db.save_pick(item["key"], chosen, approved=False)
                 plan["lines"].append(line)
-            current = j.browser.cart_contents()
+            current = starting_cart if prepared else j.browser.cart_contents()
             plan['cart_before'] = dict(current) if current is not None else None
             plan['added_quantities'] = {}
             if current is None:
@@ -137,7 +141,7 @@ def fill(force: bool = False) -> dict:
             j.db.save_cart_run(week, review_id, "adding", plan)
         fresh = not run
         if not fresh:
-            current = j.browser.cart_contents()
+            current = starting_cart if prepared else j.browser.cart_contents()
         if current is None:
             if not fresh:
                 raise RuntimeError("Some items may already be in your cart, and the cart couldn't be read to check. "

@@ -466,7 +466,7 @@ def test_quick_rebuild_skips_walmart(monkeypatch):
     c.post("/api/servings?wait=true", json={"date": "2026-10-12", "entry_type": "dinner", "recipe_id": "s1", "servings": 3})
     assert calls == {"login": 0, "search": 0}          # an edit never touches Walmart
     jobs.build_review(notify=True)
-    assert calls["login"] == 1                         # the scheduled Saturday build still checks sign-in
+    assert calls["login"] == 0                         # even scheduled cached builds skip account browsing
 
 
 def test_product_images_cached(monkeypatch, tmp_path):

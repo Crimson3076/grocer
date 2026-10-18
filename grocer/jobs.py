@@ -708,17 +708,25 @@ def build_review(notify: bool = True) -> dict:
             needs[key] = planner.Need(key=key, category=food["category"] if food else "other",
                                       unquantified=True, optional_only=False, sources=["Restock"])
 
-    # The sign-in check costs a page load; only the scheduled build (which warns you before Sunday)
-    # and a due history refresh need it. Quick rebuilds after edits skip it.
+    # Keep full history browsing off the normal shopping path. Import on first setup
+    # before any picks exist; later imports are explicit through Settings.
     login_ok = True
-    if notify or _history_stale():
+    def covered_staple(key):
+        food, stock = db.food(key), db.stock(key)
+        return ((food and food["staple"]) or key in on_hand) and not (
+            stock and (stock["packages"] is None or stock["packages"] <= planner.STOCK_LEVELS["low"]))
+
+    cached_only = all(db.pick(k) and locally_available(dict(db.pick(k))) for k in needs
+                      if needs[k].category != "none" and not covered_staple(k))
+    refresh_history = not cached_only and _history_stale() and not db.one("SELECT 1 FROM picks LIMIT 1")
+    if (notify and not cached_only) or refresh_history:
         try:
             browser.ensure_logged_in()
         except LoginRequired:
             login_ok = False
         except BrowserChallenge:
             pass  # handled per search below
-    if login_ok and _history_stale():
+    if login_ok and refresh_history:
         try:
             sync_history(recheck=False)
         except Exception as e:  # noqa: BLE001  never let history block the weekly list
@@ -733,9 +741,7 @@ def build_review(notify: bool = True) -> dict:
                  step=f"Checking {key}" if db.pick(key) else f"Finding {key} at Walmart")
         if need.category == "none":
             continue
-        food = db.food(key)
-        stock = db.stock(key)
-        if ((food and food["staple"]) or key in on_hand) and not (stock and (stock["packages"] is None or stock["packages"] <= planner.STOCK_LEVELS["low"])):
+        if covered_staple(key):
             items.append(_item_entry(need, dict(db.pick(key)) if db.pick(key) else None, [], False, on_hand))
             continue
         if blocked:
@@ -1322,7 +1328,7 @@ def clear_cart(scope: str = "ours") -> dict:
                 if not left.get(iid):
                     plan.setdefault('added_quantities', {})[iid] = 0
             plan['added'] = sum(str(line['pick']['item_id']) not in plan['missing'] for line in plan['lines'])
-            state = status = 'partial' if plan['missing'] else 'carted'
+            state = status = 'partial' if plan['missing'] or plan.get('unverified') else 'carted'
         data = json.loads(row['data'])
         data['cart_result'] = plan
         db.save_cart_run(row['week_start'], row['id'], state, plan)

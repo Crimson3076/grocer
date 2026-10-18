@@ -177,6 +177,7 @@ function render() {
   let h = steps(2) + `<h1>Check the list</h1>
     <div class="sub">${R.meals.length ? `${R.meals.length} dinner${R.meals.length === 1 ? '' : 's'}, ${day(R.week_start)} to ${day(R.week_end || R.week_start)}` : `Groceries-only trip · ${day(R.week_start)}`}</div>`;
 
+  h += mealCosts();
   if (building) h += `<div class="note good">Getting your list ready. This can take a few minutes because it goes slowly on
     Walmart's site. You can leave this page; you'll get a notification when it's done.</div>`;
   if (!R.login_ok) h += `<div class="note">Walmart signed you out. <a class="btn" href="/signin" target="_blank">Sign in to Walmart</a></div>`;
@@ -295,9 +296,9 @@ function renderSent() {
       <p><a class="btn primary big" href="https://www.walmart.com/cart" target="_blank">Open Walmart to check out</a></p>
       <div class="small">${r.unverified ? esc(r.verification_note || "Check quantities and pickup or delivery availability in Walmart. ") : ""} After buying the groceries, tap Confirm what I bought to update your pantry estimate.</div>
       <button class="link" onclick="checkedOut()">Confirm what I bought</button>
-      <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Take it back out of the cart</summary>
+      <p><button onclick="clearCart('ours')">Remove what Grocer added</button></p>
+      <details style="margin-top:6px"><summary class="link" style="cursor:pointer;list-style:none">Other cart options</summary>
         <div class="actions" style="justify-content:center">
-          <button onclick="clearCart('ours')">Only what the app added</button>
           <button onclick="clearCart('all')">Everything in the cart</button></div></details></div>`;
   }
   if (problems.length || missingIds.length) {
@@ -316,6 +317,7 @@ function renderSent() {
     h += `</div>`;
   }
   if (r.swaps?.length) h += `<h2>Swapped</h2><div class="card small">${r.swaps.map(esc).join("<br>")}</div>`;
+  h += mealCosts();
   if (lines.length) {
     h += `<details class="sec"><summary><div class="grow"><div class="name">What was sent (${lines.length})</div></div></summary><div class="in">`;
     for (const l of lines) h += `<div class="line">${thumb(l.pick)}<div class="grow"><div class="name">${esc(l.key)}</div>
@@ -376,6 +378,12 @@ async function find() {
     || `<div class="small" style="padding:8px 0">Nothing you can get today or tomorrow.</div>`;
 }
 
+function mealCosts() {
+  const costs=R.meal_costs || [];
+  if (!costs.length) return '';
+  return `<details class="sec"><summary>Estimated meal costs</summary><div class="card"><p class="small">Cost of ingredients used, including what you already have. Full packages in your shopping cart can cost more. Saved prices; excludes tax and fees.</p>${costs.map(c=>`<div class="line"><div class="grow"><div class="name">${esc(c.name)}</div><div class="small">${c.complete ? `About ${money(c.total)} total · ${money(c.per_serving)} / serving · ${c.servings} servings` : `Known ingredients: ${money(c.known_total)} · incomplete estimate`}</div>${c.missing.length ? `<div class="small">Needs a price or amount: ${c.missing.map(esc).join(', ')}</div>` : ''}</div></div>`).join('')}</div></details>`;
+}
+
 // ------------------------------------------------------------------ actions
 function rebuild() { startJob("/api/review/build"); }
 async function confirmAll() {
@@ -392,10 +400,14 @@ function send(unanswered) {
   startJob('/api/send');
 }
 function clearCart(scope) {
-  const msg = scope === "all" ? "Empty your whole Walmart cart, including anything you added yourself?"
-    : "Take this order's items back out of your Walmart cart? Anything you added yourself stays.";
-  if (confirm(msg)) startJob("/api/cart/clear", { scope });
+  const dialog=document.createElement('dialog');dialog.className='flow-dialog flow-panel';
+  dialog.innerHTML=scope==='all' ? '<h2>Empty your Walmart cart?</h2><p>This includes items you added yourself.</p>' : '<h2>Remove what Grocer added?</h2><p>Grocer removes unchanged cart lines that it added to this trip. Items already in your cart, shared quantities, and items changed afterwards stay for you to adjust in Walmart.</p>';
+  const go=document.createElement('button');go.textContent=scope==='all'?'Empty whole cart':'Remove Grocer items';
+  go.onclick=()=>{dialog.close();dialog.remove();startJob('/api/cart/clear',{scope});};
+  const cancel=document.createElement('button');cancel.textContent='Cancel';cancel.onclick=()=>{dialog.close();dialog.remove();};
+  dialog.append(go,cancel);document.body.appendChild(dialog);dialog.showModal();
 }
+
 async function reopenFor(key) {
   const dialog=document.createElement('dialog');dialog.className='flow-dialog flow-panel';
   dialog.innerHTML='<h2>Reopen this list?</h2><p>Items already in Walmart stay there. You can change products and resend only what is missing.</p>';

@@ -82,3 +82,48 @@ def test_cart_group_provides_store_and_method():
     assert cart_item_checks(data, "1234", "PICKUP")["7"]["available"] is True
     assert cart_item_checks(data, "1234", "DELIVERY")["7"]["available"] is False
     assert cart_item_checks(data, "9999", "PICKUP")["7"]["available"] is False
+
+
+def test_cached_build_does_not_import_history_or_open_account(household):
+    c, browser, db = household
+    build(c)
+    db.run("DELETE FROM events WHERE kind='history_synced'")
+    calls = []
+    browser.purchase_history = lambda: (calls.append("history") or [])
+    browser.ensure_logged_in = lambda: calls.append("account")
+    build(c)
+    assert not calls
+
+
+def test_cart_uses_prepared_snapshot_instead_of_account_and_store_pages(household):
+    c, browser, _ = household
+    build(c)
+    calls = []
+    original = browser.cart_contents
+    browser.prepare_cart = lambda: (calls.append("prepare") or original())
+    browser.cart_contents = lambda: (calls.append("after") or original())
+    browser.ensure_logged_in = lambda: pytest.fail("Opened account page")
+    browser.ensure_store = lambda: pytest.fail("Opened home page")
+    result = c.post("/api/cart?force=true&wait=true").json()
+    assert "failed" not in result
+    assert calls == ["prepare", "after"]
+
+
+def test_costs_are_exposed_on_review_and_dinners(household):
+    c, _, _ = household
+    build(c)
+    review = c.get("/api/review").json()
+    assert len(review["meal_costs"]) == len(review["meals"])
+    dinners = c.get("/api/dinners").json()
+    assert all("cost" in m for m in dinners["meals"])
+
+
+def test_one_missing_product_does_not_force_full_history_import(household):
+    c, browser, db = household
+    build(c)
+    db.run("DELETE FROM events WHERE kind='history_synced'")
+    db.run("DELETE FROM picks WHERE key='corn tortilla'")
+    calls = []
+    browser.purchase_history = lambda: (calls.append("history") or [])
+    build(c)
+    assert not calls

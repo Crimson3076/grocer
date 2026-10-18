@@ -76,6 +76,8 @@ def overview() -> dict:
     j = _j()
     entries, done, choice, auto_end = upcoming()
     t = j.today()
+    from .costs import for_servings, saved_recipe_costs
+    prices = saved_recipe_costs(j.db)
     planned_days = {e.date for e in entries}
     meals = []
     for e in entries:
@@ -87,6 +89,8 @@ def overview() -> dict:
             "servings": j.db.meal_servings(e.date, e.entry_type, e.recipe_id) or float(j.CONFIG.default_servings),
             "url": j.mealie.recipe_url(j.CONFIG.mealie_public_url, e.recipe_slug) if e.recipe_slug else None,
         })
+    for meal in meals:
+        meal["cost"] = for_servings(prices.get(meal["recipe_id"]), meal["servings"])
     empty = [(t + timedelta(days=i)).isoformat() for i in range(8)
              if (t + timedelta(days=i)).isoformat() not in planned_days]
     return {"meals": meals, "empty": empty, "default_servings": j.CONFIG.default_servings,

@@ -386,6 +386,19 @@ class WalmartBrowser:
             return {}
 
     # ---- session ----
+    def prepare_cart(self) -> dict[str, int] | None:
+        """Check sign-in, store, and starting quantities on one cart visit."""
+        contents = self.cart_contents()
+        path = self._page.url.split("?")[0]
+        if "login" in path or "/signin" in path:
+            raise LoginRequired(self._page.url)
+        current = selected_store(self._last_cart_data, self.fulfillment)
+        if current and current != self.store_id:
+            raise RuntimeError("The Walmart cart is using a different store. Select your configured store before sending.")
+        if self.on_login_ok:
+            self.on_login_ok()
+        return contents
+
     def ensure_logged_in(self) -> None:
         self._goto(f"{BASE}/account")
         if "/account/login" in self._page.url or "login" in self._page.url.split("?")[0].split("/")[-1]:
@@ -712,5 +725,6 @@ class WalmartBrowser:
         self._goto(f"{BASE}/cart")
         self._pause(1.0)
         data = self._next_data()
+        self._last_cart_data = data
         self.last_cart_checks = cart_item_checks(data, self.store_id, self.fulfillment)
         return cart_quantities(data)
