@@ -59,3 +59,15 @@ Everything stateful lives in the `/data` volume (`/mnt/user/appdata/grocer`): `g
 - Update `SYNOPSIS.md` when behavior changes, and `README.md` when setup changes.
 - If you can't test something against the real services (Walmart page layout, Mealie writes), say so in the pull request and log enough for the owner to check it in the container logs.
 - Ideas already on the table are listed at the end of `SYNOPSIS.md`.
+
+## Code Review Rules
+
+### Secrets and auth
+- Flag any change that could expose a token, password or API key: in logs, API responses, rendered HTML, error messages or LLM prompts. Saved credentials must never be echoed back, not even masked or partially.
+- Flag changes that weaken authentication, CSRF/same-origin checks or permission checks.
+
+### Tests
+- Flag code behaviour changes that have no test, and tests that no longer exercise the code they claim to cover. Workflow, documentation and configuration-only changes are exempt.
+
+### Scope
+- Flag changes to CI workflows, Dockerfiles, dependency/lock files or migrations unless the linked issue asks for them.
