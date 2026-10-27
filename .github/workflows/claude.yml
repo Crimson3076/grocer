@@ -1,5 +1,6 @@
 # Claude Code agent: starts when n8n (or you) adds the `agent-fix` label to an issue,
-# or when a repo collaborator mentions @claude in an issue/PR comment.
+# or when the owner/a collaborator writes a comment that STARTS with @claude
+# (a mention buried in other text, e.g. quoted from an issue, does not trigger it).
 name: Claude agent
 on:
   issues:
@@ -24,11 +25,12 @@ jobs:
       cancel-in-progress: false
     if: >
       (github.event_name == 'issues' && github.event.label.name == 'agent-fix') ||
-      (github.event_name != 'issues' && contains(github.event.comment.body, '@claude'))
+      (github.event_name != 'issues' && startsWith(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
