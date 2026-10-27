@@ -1,0 +1,36 @@
+# Weekly proactive bug hunt, started by n8n (workflow_dispatch) or manually from the Actions tab.
+# It only REPORTS: opens up to 3 issues labelled bug + bot-found. n8n then triages them like any other issue.
+name: Bug hunt
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are doing a periodic bug hunt on ${{ github.repository }}. Do NOT change any code.
+            1. Read CLAUDE.md and README. Install dependencies and run the test suite and any linters described there.
+            2. Review the last 50 commits and the riskiest code paths for real defects: crashes, wrong results,
+               data loss, security issues, failing or flaky tests. Ignore style nits and speculative refactors.
+            3. Run `gh issue list --state all --limit 100` and skip anything already reported.
+            4. For at most 3 confirmed, reproducible problems, create one issue each with
+               `gh issue create --label bug --label bot-found`, containing: title, exact reproduction steps or a failing
+               command/test, expected vs actual, the file/line involved and why it's a bug.
+            5. If you find nothing solid, create no issues. Finish with a short summary in the job log.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Bash,Read,Glob,Grep,Bash(gh issue list:*),Bash(gh issue create:*)"

@@ -1,0 +1,19 @@
+name: Bug report
+description: Something is broken
+labels: []
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, description: "What did you expect, and what happened instead?" }
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes: { label: Steps to reproduce, placeholder: "1. ...\n2. ...\n3. ..." }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: Version, description: "App version / image tag and platform (e.g. Unraid 7.3)" }
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs, description: "Relevant log lines. Remove tokens/passwords.", render: shell }
