@@ -1047,3 +1047,43 @@ def test_search_falls_back_when_typing_fails():
     res = w._search("butter")
     assert went == [("https://www.walmart.com/search?q=butter", False)]
     assert [r["item_id"] for r in res] == ["42"] and res[0]["local_reason"] == "Pickup today"
+
+
+def test_scheduled_job_retries_then_notifies(monkeypatch):
+    import threading
+    monkeypatch.setattr(jobs, "SCHEDULE_RETRY_SECONDS", 0.01)
+    sent = []
+    class RecHA(FakeHA):
+        def notify(self, title, message, **kw):
+            sent.append(title)
+    monkeypatch.setattr(jobs, "ha", RecHA())
+    gate = threading.Event()
+    blocker = jobs.start("history", "Checking", lambda: gate.wait(5))
+    ran = []
+    jobs.start_scheduled("build", "Building", lambda: ran.append(1))
+    for _ in range(100):
+        if sent:
+            break
+        __import__("time").sleep(0.05)
+    assert sent == ["Grocer could not start a job"] and not ran
+    gate.set()
+    jobs.wait_for(blocker)
+    jobs.start_scheduled("build", "Building", lambda: ran.append(1))
+    jobs.wait_for({"id": jobs.status()["job"]["id"]}) if jobs.status()["job"] else None
+    assert ran == [1]
+
+
+def test_finished_futures_are_pruned():
+    first = jobs.start("history", "a", lambda: None)
+    jobs.wait_for(first)
+    second = jobs.start("history", "b", lambda: None)
+    jobs.wait_for(second)
+    assert first["id"] not in jobs.FUTURES
+
+
+def test_missing_tokens_warn(monkeypatch, caplog):
+    monkeypatch.setattr(appmod.CONFIG, "mealie_token", "")
+    monkeypatch.setattr(appmod.CONFIG, "ha_token", "")
+    with caplog.at_level("WARNING", logger="grocer"):
+        appmod.warn_missing_tokens()
+    assert "MEALIE_TOKEN is empty" in caplog.text and "HA_TOKEN is empty" in caplog.text

@@ -61,13 +61,21 @@ def _job_response(job: dict, wait: bool):
     return {"job": job}
 
 
+def warn_missing_tokens() -> None:
+    for name, value in (("MEALIE_TOKEN", CONFIG.mealie_token), ("HA_TOKEN", CONFIG.ha_token)):
+        if not value:
+            log.warning("%s is empty. Set it in grocer.env or the app cannot %s.", name,
+                        "read Mealie" if name == "MEALIE_TOKEN" else "send phone notifications")
+
+
 @asynccontextmanager
 async def lifespan(_app):
-    scheduler.add_job(lambda: jobs.start("build", "Building next week's list", jobs.build_review), CronTrigger.from_crontab(CONFIG.review_cron, timezone=CONFIG.tz),
+    warn_missing_tokens()
+    scheduler.add_job(lambda: jobs.start_scheduled("build", "Building next week's list", jobs.build_review), CronTrigger.from_crontab(CONFIG.review_cron, timezone=CONFIG.tz),
                       id="review", replace_existing=True)
-    scheduler.add_job(lambda: jobs.start("cart", "Filling the Walmart cart", jobs.run_cart), CronTrigger.from_crontab(CONFIG.cart_cron, timezone=CONFIG.tz),
+    scheduler.add_job(lambda: jobs.start_scheduled("cart", "Filling the Walmart cart", jobs.run_cart), CronTrigger.from_crontab(CONFIG.cart_cron, timezone=CONFIG.tz),
                       id="cart", replace_existing=True)
-    scheduler.add_job(lambda: jobs.start("plan", "Planning dinners", dinners.fill_empty),
+    scheduler.add_job(lambda: jobs.start_scheduled("plan", "Planning dinners", dinners.fill_empty),
                       CronTrigger.from_crontab(CONFIG.plan_cron, timezone=CONFIG.tz), id="plan", replace_existing=True)
     scheduler.start()
     log.info("schedule: review %s, cart %s (%s)", CONFIG.review_cron, CONFIG.cart_cron, CONFIG.tz)

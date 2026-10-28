@@ -18,7 +18,18 @@ if ! ssh "$HOST" "test -f $DATA/grocer.env"; then
     cp .env.example .env
     read -rsp "Mealie API token: " MT; echo
     read -rsp "Home Assistant long-lived token: " HT; echo
-    sed -i "s|^MEALIE_TOKEN=.*|MEALIE_TOKEN=$MT|; s|^HA_TOKEN=.*|HA_TOKEN=$HT|" .env
+    # python, not sed: tokens may contain | & or \ which sed would mangle
+    MT="$MT" HT="$HT" python3 - <<'PY'
+import os
+lines = []
+for line in open(".env"):
+    if line.startswith("MEALIE_TOKEN="):
+        line = "MEALIE_TOKEN=" + os.environ["MT"] + "\n"
+    elif line.startswith("HA_TOKEN="):
+        line = "HA_TOKEN=" + os.environ["HT"] + "\n"
+    lines.append(line)
+open(".env", "w").write("".join(lines))
+PY
   fi
   echo "Copying .env to $HOST:$DATA/grocer.env ..."
   ssh "$HOST" "mkdir -p $DATA && umask 077 && cat > $DATA/grocer.env" < .env
