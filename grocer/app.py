@@ -6,11 +6,13 @@ import logging
 from datetime import date
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, conint
@@ -82,6 +84,19 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Grocer", docs_url="/docs", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def same_origin_only(request: Request, call_next):
+    """Refuse changes sent from another web page. Browsers always say where a cross-site POST came from;
+    requests with no Origin (scripts, Home Assistant, curl) are not browser pages and pass."""
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = request.headers.get("origin")
+        if origin is not None and urlparse(origin).netloc != request.headers.get("host", ""):
+            return JSONResponse({"detail": "Cross-site request refused."}, status_code=403)
+    return await call_next(request)
+
+
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -142,12 +157,12 @@ def mealie_cleanup_page():
     return FileResponse(STATIC / "mealie-cleanup.html")
 
 
-@app.get("/signin")
+@app.post("/signin")
 def signin():
     """Open Walmart's sign-in page in the service's browser, then jump to the VNC view of it."""
     if not jobs.busy():
         jobs.submit(_open_signin)
-    return RedirectResponse(CONFIG.vnc_url)
+    return RedirectResponse(CONFIG.vnc_url, status_code=303)
 
 
 def _open_signin() -> None:

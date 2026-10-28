@@ -21,7 +21,7 @@ Saved products previously verified at your selected store and pickup/delivery me
 
 Set `CART_VERIFY_AFTER_ADD=false` in `grocer.env` to restore checks before adding. In that mode, `CART_AVAILABILITY_MINUTES` controls the recent-check window (0 to 60 minutes).
 
-Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
+Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080). The browser view is password protected: set `VNC_PASSWORD`, or one is generated and saved in `/data/vnc-password.txt`.
 
 ## Setup
 
@@ -33,7 +33,7 @@ The image is built by GitHub on every change to `main` and published as `ghcr.io
 4. Create the container:
    - **Unraid:** stop and remove any old Grocer container first (they can't share the ports or the Chrome profile). Copy `unraid/grocer.xml` to `/boot/config/plugins/dockerMan/templates-user/my-grocer.xml`, then Docker, Add Container, pick "grocer" and Apply. Updates are then the usual "Apply update" in the Docker tab.
    - **Anywhere else:** `docker compose up -d` (or `bash deploy.sh` to pull and recreate over SSH).
-5. Open `http://<server>:8790/signin`, sign in to Walmart, and pick your store and pickup or delivery in that browser.
+5. Open `http://<server>:8790/settings`, press **Sign in to Walmart**, sign in, and pick your store and pickup or delivery in that browser.
 6. In **Settings**, enter the same store number and method.
 7. Go to **Dinners**, pick, then **Next: check the list**.
 
