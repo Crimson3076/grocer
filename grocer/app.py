@@ -6,11 +6,11 @@ import logging
 from datetime import date
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
@@ -84,6 +84,8 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Grocer", docs_url="/docs", lifespan=lifespan)
+
+
 @app.middleware("http")
 async def same_origin_only(request: Request, call_next):
     """Refuse changes sent from another web page. Browsers always say where a cross-site POST came from;

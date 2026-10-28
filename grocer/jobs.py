@@ -1160,7 +1160,6 @@ def image_file(item_id: str, size: str = "small", src: str | None = None) -> Pat
         return path
     url = db.image_for(item_id)
     if not url and src:
-        from urllib.parse import urlparse
         host = urlparse(src).hostname or ""
         if host == "walmartimages.com" or host.endswith(".walmartimages.com"):
             url = src.split("?")[0]
