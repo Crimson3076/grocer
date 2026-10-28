@@ -140,6 +140,7 @@ class FakeBrowser:
         pass
 
 
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 
 
@@ -476,6 +477,7 @@ def test_product_images_cached(monkeypatch, tmp_path):
     class Resp:
         content = b"\xff\xd8\xff fake jpeg"
         headers = {"content-type": "image/jpeg"}
+        is_redirect = False
         def raise_for_status(self): pass
 
     monkeypatch.setattr(jobs.httpx, "get", lambda url, **kw: (downloads.append(url), Resp())[1])
@@ -1023,6 +1025,7 @@ def test_pictures_for_unsaved_listings_only_from_walmart(monkeypatch, tmp_path):
     class R:
         headers = {"content-type": "image/jpeg"}
         content = b"jpg"
+        is_redirect = False
         def raise_for_status(self): pass
 
     monkeypatch.setattr(jobs.httpx, "get", lambda url, **kw: (fetched.append(url), R())[1])
@@ -1072,6 +1075,7 @@ def test_picture_host_must_be_walmartimages_itself(monkeypatch, tmp_path):
     class R:
         headers = {"content-type": "image/jpeg"}
         content = b"jpg"
+        is_redirect = False
         def raise_for_status(self): pass
 
     def get(url, **kw):
@@ -1083,3 +1087,29 @@ def test_picture_host_must_be_walmartimages_itself(monkeypatch, tmp_path):
     assert seen == []
     assert jobs.image_file("987655", src="https://walmartimages.com/a.jpg") is not None
     assert seen == [("https://walmartimages.com/a.jpg", False)]
+
+
+def test_picture_redirects_only_followed_within_walmartimages(monkeypatch, tmp_path):
+    monkeypatch.setattr(jobs, "IMAGE_DIR", tmp_path)
+    seen = []
+
+    class R:
+        def __init__(self, loc=None):
+            self.is_redirect = bool(loc)
+            self.headers = {"location": loc} if loc else {"content-type": "image/jpeg"}
+            self.url = httpx.URL("https://i5.walmartimages.com/a.jpg")
+            self.content = b"jpg"
+        def raise_for_status(self): pass
+
+    targets = {"https://i5.walmartimages.com/a.jpg": "https://i5.walmartimages.com/b.jpg",
+               "https://i5.walmartimages.com/c.jpg": "http://169.254.169.254/x"}
+
+    def get(url, **kw):
+        seen.append(url)
+        return R(targets.get(url))
+
+    monkeypatch.setattr(jobs.httpx, "get", get)
+    assert jobs.image_file("111", src="https://i5.walmartimages.com/a.jpg") is not None
+    assert seen[-1] == "https://i5.walmartimages.com/b.jpg"
+    assert jobs.image_file("222", src="https://i5.walmartimages.com/c.jpg") is None
+    assert "http://169.254.169.254/x" not in seen

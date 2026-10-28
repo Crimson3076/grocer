@@ -33,7 +33,7 @@ The image is built by GitHub on every change to `main` and published as `ghcr.io
 4. Create the container:
    - **Unraid:** stop and remove any old Grocer container first (they can't share the ports or the Chrome profile). Copy `unraid/grocer.xml` to `/boot/config/plugins/dockerMan/templates-user/my-grocer.xml`, then Docker, Add Container, pick "grocer" and Apply. Updates are then the usual "Apply update" in the Docker tab.
    - **Anywhere else:** `docker compose up -d` (or `bash deploy.sh` to pull and recreate over SSH).
-5. Open `http://<server>:8790/signin`, sign in to Walmart, and pick your store and pickup or delivery in that browser.
+5. Open `http://<server>:8790/settings`, press **Sign in to Walmart**, sign in, and pick your store and pickup or delivery in that browser.
 6. In **Settings**, enter the same store number and method.
 7. Go to **Dinners**, pick, then **Next: check the list**.
 
