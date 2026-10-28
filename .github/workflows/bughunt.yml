@@ -26,6 +26,16 @@ jobs:
             1. Read CLAUDE.md and README. Install dependencies and run the test suite and any linters described there.
             2. Review the last 50 commits and the riskiest code paths for real defects: crashes, wrong results,
                data loss, security issues, failing or flaky tests. Ignore style nits and speculative refactors.
+            2b. Security: check dependencies for known vulnerabilities with the ecosystem's audit tool if it's available
+               (pip-audit, npm audit, govulncheck, cargo audit) and look for injection, path traversal, missing auth and
+               secrets in logs or responses. Dependency bumps themselves are handled by Dependabot; report only what it can't fix.
+               When reporting an exposed secret, cite only the file and line; never quote or paste the value, even partially.
+               If an audit tool is missing or the network is blocked, skip it and say so in your summary; don't install packages.
+            2c. Database efficiency (only if the project uses a database): look for N+1 queries, queries inside loops,
+               missing indexes on columns used for lookups/joins, unbounded table scans or result sets, and missing
+               transactions around multi-step writes. Report one only with evidence (the query and why it's slow or unsafe).
+               For these, the query or code path plus an EXPLAIN output, a row count or a complexity argument counts as
+               reproduction; a failing test isn't required.
             3. Run `gh issue list --state all --limit 100` and skip anything already reported.
             4. For at most 3 confirmed, reproducible problems, create one issue each with
                `gh issue create --label bug --label bot-found`, containing: title, exact reproduction steps or a failing
