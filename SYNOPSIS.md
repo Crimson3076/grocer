@@ -23,7 +23,7 @@ Everything runs on the home server (Unraid, Docker). Nothing goes to the cloud.
 | Ollama with qwen3:8b on an Intel Arc B580 | All AI judgment, called with JSON-schema structured output, temperature 0, `think:false`, the same `num_ctx` (4096) on every call (changing it reloads the model), and a cap on output length |
 | Real Chrome driven by Patchright (an undetected Playwright fork) | Walmart search, product pages, order history, adding to cart. Persistent signed-in profile. Runs on a virtual screen (Xvfb) viewable through noVNC on port 6080 so a person can sign in or solve a robot check |
 | Home Assistant | Phone notifications to every household phone (actionable: Approve, Retry, Checked out), auto-cleared on every phone once anyone resolves them; a voice intent ("we're out of / low on X") that fires an event the app listens to over HA's websocket |
-| FastAPI + APScheduler + SQLite | The app itself, port 8790, LAN only, no login |
+| FastAPI + APScheduler + SQLite | The app itself, port 8790, LAN only, no login (the browser view on 6080 has a password) |
 
 ## Choosing dinners (first screen)
 
@@ -90,7 +90,7 @@ The Dinners page shows the next two weeks of Mealie's dinner plan as photo cards
 - Walmart pacing is learned: at least the learned gap between page loads (randomized up to 1.8x), a break every 8 pages, an hourly cap derived from the gap, and a little scrolling on each page. A robot check multiplies the gap by 1.5 (max 60 s), except checks in the first 2 pages after a warm-up; every 15 clean page loads multiplies it by 0.85 (min 5 s). After 20 minutes idle it warms up from the home page, and searches are typed into the search box (URL search as a fallback). The learned gap is saved and survives restarts. Searches are cached 12 hours and saved same-store products are reused while building the list. Cart fills verify saved products after adding by default; strict mode uses recent observations or live checks, with the same pacing.
 - Browser work happens on one worker thread, because Playwright's sync API is bound to one thread; quick edits never wait on it.
 - A wrong merge is worse than a missed one: duplicate detection must be conservative and reviewable. Local scans save proposals; selected merges show product and stock survivors, snapshot the affected data, and support undo only when no newer ingredient or stock changes would be lost. Neither startup nor scheduled builds silently merge ingredients.
-- Keep everything local. Ports 8790 and 6080 are for the LAN only; the browser view has no password by the household's choice.
+- Keep everything local. Ports 8790 and 6080 are for the LAN only; the browser view always asks for a password (`VNC_PASSWORD`, or a random one saved in `/data/vnc-password.txt` at startup).
 - Startup must survive plain container restarts by clearing the virtual screen's lock file and Chrome's profile lock.
 
 ## Configuration (environment)

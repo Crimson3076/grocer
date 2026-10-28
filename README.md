@@ -110,7 +110,7 @@ You can also order any day from the Dinners page.
 
 ## Access
 
-Keep ports 8790 (app) and 6080 (browser view) on the LAN or a VPN. Neither has a login, and the browser is signed in to Walmart. Don't put them behind a public reverse proxy.
+Keep ports 8790 (app) and 6080 (browser view) on the LAN or a VPN. The app (8790) has no login. The browser view (6080) asks for a password: set `VNC_PASSWORD`, or leave it empty and a random one is made at startup and saved in `/data/vnc-password.txt` (it changes each time the container starts). The browser is signed in to Walmart. Don't put them behind a public reverse proxy.
 
 ## Limits
 
