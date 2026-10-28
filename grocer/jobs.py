@@ -345,11 +345,15 @@ def busy() -> bool:
         return STATE["job"] is not None
 
 
+class Busy(RuntimeError):
+    """Another task already has the browser."""
+
+
 def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
     """Run a long task on the browser thread and report progress. One at a time."""
     with _plock:
         if STATE["job"]:
-            raise RuntimeError('Another task is running. This action was not queued. Try again when it finishes.')
+            raise Busy('Another task is running. This action was not queued. Try again when it finishes.')
         job = {"id": uuid.uuid4().hex[:8], "kind": kind, "label": label, "step": "Starting",
                "done": 0, "total": 0, "waiting": False, "started": time.time()}
         STATE["job"] = job
@@ -373,8 +377,35 @@ def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
             _finish("failed", _friendly(e), None, None)
             raise
 
-    FUTURES[job["id"]] = WORKER.submit(run)
+    with _plock:
+        for old in [k for k, f in list(FUTURES.items()) if f.done()]:
+            del FUTURES[old]
+        FUTURES[job["id"]] = WORKER.submit(run)
     return dict(job, state='accepted')
+
+
+SCHEDULE_RETRY_SECONDS = 300
+SCHEDULE_RETRIES = 3
+
+
+def start_scheduled(kind: str, label: str, fn, *, attempt: int = 0) -> None:
+    """Start a scheduled job. If another task has the browser, try again in a few
+    minutes and tell the household if it still can't run."""
+    try:
+        start(kind, label, fn)
+        return
+    except Busy:
+        log.warning("scheduled %s: another task is running (try %d of %d)", kind, attempt + 1, SCHEDULE_RETRIES + 1)
+    if attempt < SCHEDULE_RETRIES:
+        t = threading.Timer(SCHEDULE_RETRY_SECONDS, start_scheduled, (kind, label, fn), {"attempt": attempt + 1})
+        t.daemon = True
+        t.start()
+        return
+    try:
+        ha.notify("Grocer could not start a job", f"{label} did not run because another task kept the browser busy. "
+                  "Open Grocer and start it by hand.", tag=f"grocer-skipped-{kind}")
+    except Exception:  # noqa: BLE001
+        log.exception("could not send the skipped-job notice")
 
 
 def _finish(state: str, error: str | None, message: str | None, result) -> None:
