@@ -1069,7 +1069,10 @@ def test_scheduled_job_retries_then_notifies(monkeypatch):
     gate.set()
     jobs.wait_for(blocker)
     jobs.start_scheduled("build", "Building", lambda: ran.append(1))
-    jobs.wait_for({"id": jobs.status()["job"]["id"]}) if jobs.status()["job"] else None
+    for _ in range(100):
+        if ran:
+            break
+        __import__("time").sleep(0.05)
     assert ran == [1]
 
 

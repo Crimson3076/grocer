@@ -373,9 +373,10 @@ def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
             _finish("failed", _friendly(e), None, None)
             raise
 
-    for old in [k for k, f in FUTURES.items() if f.done()]:
-        del FUTURES[old]
-    FUTURES[job["id"]] = WORKER.submit(run)
+    with _plock:
+        for old in [k for k, f in list(FUTURES.items()) if f.done()]:
+            del FUTURES[old]
+        FUTURES[job["id"]] = WORKER.submit(run)
     return dict(job, state='accepted')
 
 
