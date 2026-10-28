@@ -1047,3 +1047,39 @@ def test_search_falls_back_when_typing_fails():
     res = w._search("butter")
     assert went == [("https://www.walmart.com/search?q=butter", False)]
     assert [r["item_id"] for r in res] == ["42"] and res[0]["local_reason"] == "Pickup today"
+
+
+def test_cross_site_posts_are_refused_but_same_site_passes():
+    c = TestClient(appmod.app)
+    bad = c.post("/api/no-such-route", headers={"Origin": "http://evil.example.com"})
+    assert bad.status_code == 403
+    assert c.post("/api/no-such-route", headers={"Origin": "null"}).status_code == 403
+    ok = c.post("/api/no-such-route", headers={"Origin": "http://testserver"})
+    assert ok.status_code != 403
+    assert c.get("/health", headers={"Origin": "http://evil.example.com"}).status_code == 200
+
+
+def test_signin_is_post_only():
+    c = TestClient(appmod.app)
+    assert c.get("/signin", follow_redirects=False).status_code == 405
+    assert c.post("/signin", headers={"Origin": "http://evil.example.com"}).status_code == 403
+
+
+def test_picture_host_must_be_walmartimages_itself(monkeypatch, tmp_path):
+    monkeypatch.setattr(jobs, "IMAGE_DIR", tmp_path)
+    seen = []
+
+    class R:
+        headers = {"content-type": "image/jpeg"}
+        content = b"jpg"
+        def raise_for_status(self): pass
+
+    def get(url, **kw):
+        seen.append((url, kw.get("follow_redirects")))
+        return R()
+
+    monkeypatch.setattr(jobs.httpx, "get", get)
+    assert jobs.image_file("987655", src="https://evilwalmartimages.com/a.jpg") is None
+    assert seen == []
+    assert jobs.image_file("987655", src="https://walmartimages.com/a.jpg") is not None
+    assert seen == [("https://walmartimages.com/a.jpg", False)]

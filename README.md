@@ -21,7 +21,7 @@ Saved products previously verified at your selected store and pickup/delivery me
 
 Set `CART_VERIFY_AFTER_ADD=false` in `grocer.env` to restore checks before adding. In that mode, `CART_AVAILABILITY_MINUTES` controls the recent-check window (0 to 60 minutes).
 
-Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080).
+Walmart browsing is paced automatically: the app learns how fast it can go, slows down after a robot check and speeds up again after a clean run. Clicks pause before and after interaction, and history pages scroll in small steps. Pagination and reloads after a challenge also respect the page pacing. These measures do not guarantee fewer challenges. If a robot check appears, solve it in **Watch the app's browser** (noVNC on port 6080). The browser view is password protected: set `VNC_PASSWORD`, or one is generated and saved in `/data/vnc-password.txt`.
 
 ## Setup
 

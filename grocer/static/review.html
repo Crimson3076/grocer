@@ -180,7 +180,7 @@ function render() {
   h += mealCosts();
   if (building) h += `<div class="note good">Getting your list ready. This can take a few minutes because it goes slowly on
     Walmart's site. You can leave this page; you'll get a notification when it's done.</div>`;
-  if (!R.login_ok) h += `<div class="note">Walmart signed you out. <a class="btn" href="/signin" target="_blank">Sign in to Walmart</a></div>`;
+  if (!R.login_ok) h += `<div class="note">Walmart signed you out. <form method="post" action="/signin" target="_blank" style="display:inline"><button class="btn">Sign in to Walmart</button></form></div>`;
   if (R.blocked) h += `<div class="note">Walmart asked for a robot check, so some items weren't looked up.
     <a class="btn" href="${esc(R.vnc_url)}" target="_blank">Open the browser</a> and press and hold the button, then <button onclick="rebuild()">Try again</button></div>`;
 

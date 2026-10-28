@@ -51,8 +51,8 @@
 
   <h2>Walmart</h2>
   <div class="list">
-    <a class="item" href="/signin" target="_blank"><span class="ic">🔑</span><span class="grow">Sign in to Walmart
-      <div class="small">Opens the app's own browser</div></span><span class="go">›</span></a>
+    <form method="post" action="/signin" target="_blank" style="display:contents"><button class="item"><span class="ic">🔑</span><span class="grow">Sign in to Walmart
+      <div class="small">Opens the app's own browser</div></span><span class="go">›</span></button></form>
     <button class="item" onclick="startJob('/api/history/sync')"><span class="ic">🧾</span><span class="grow">Read my Walmart order history
       <div class="small">So it picks things you've bought before</div></span><span class="go">›</span></button>
     <button class="item" onclick="document.getElementById('storeform').hidden ^= 1"><span class="ic">🏬</span><span class="grow">Store and pickup or delivery

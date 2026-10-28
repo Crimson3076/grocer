@@ -30,7 +30,13 @@ if [[ -n "${VNC_PASSWORD:-}" ]]; then
   x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass >/dev/null
   x11vnc -display :99 -forever -shared -quiet -rfbport 5900 -localhost -rfbauth /tmp/vncpass &
 else
-  x11vnc -display :99 -forever -shared -quiet -rfbport 5900 -localhost -nopw &
+  # never leave the Walmart browser open to the whole network: make a password and say where to find it
+  VNC_PASSWORD="$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)"
+  PW_FILE="${DATA_DIR:-/data}/vnc-password.txt"
+  (umask 077; printf '%s\n' "$VNC_PASSWORD" > "$PW_FILE")
+  echo "VNC_PASSWORD was not set. Made a browser view password and saved it in $PW_FILE (set VNC_PASSWORD in grocer.env to choose your own)."
+  x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass >/dev/null
+  x11vnc -display :99 -forever -shared -quiet -rfbport 5900 -localhost -rfbauth /tmp/vncpass &
 fi
 websockify --web /usr/share/novnc 6080 localhost:5900 >/dev/null 2>&1 &
 

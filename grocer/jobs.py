@@ -1161,7 +1161,7 @@ def image_file(item_id: str, size: str = "small", src: str | None = None) -> Pat
     if not url and src:
         from urllib.parse import urlparse
         host = urlparse(src).hostname or ""
-        if host.endswith("walmartimages.com"):
+        if host == "walmartimages.com" or host.endswith(".walmartimages.com"):
             url = src.split("?")[0]
     if url is None:
         # picked before images were saved: look it up later, one product at a time
@@ -1175,7 +1175,7 @@ def image_file(item_id: str, size: str = "small", src: str | None = None) -> Pat
     px = SIZES[size]
     try:
         r = httpx.get(url, params={"odnHeight": px, "odnWidth": px, "odnBg": "FFFFFF"}, timeout=20,
-                      headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
+                      headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=False)
         r.raise_for_status()
         if not r.headers.get("content-type", "").startswith("image/"):
             return None
