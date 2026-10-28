@@ -1076,6 +1076,44 @@ def test_scheduled_job_retries_then_notifies(monkeypatch):
     assert ran == [1]
 
 
+def test_pending_retry_runs_job_once_without_notice(monkeypatch):
+    import threading, time
+    monkeypatch.setattr(jobs, "SCHEDULE_RETRY_SECONDS", 0.2)
+    sent = []
+    class RecHA(FakeHA):
+        def notify(self, title, message, **kw):
+            sent.append(title)
+    monkeypatch.setattr(jobs, "ha", RecHA())
+    gate = threading.Event()
+    blocker = jobs.start("history", "Checking", lambda: gate.wait(5))
+    ran = []
+    jobs.start_scheduled("build", "Building", lambda: ran.append(1))
+    gate.set()
+    jobs.wait_for(blocker)
+    for _ in range(100):
+        if ran:
+            break
+        time.sleep(0.05)
+    time.sleep(0.5)
+    assert ran == [1] and sent == []
+
+
+def test_scheduled_start_does_not_retry_other_errors(monkeypatch):
+    import threading
+    started = []
+    monkeypatch.setattr(threading, "Timer", lambda *a, **k: started.append(1))
+    def boom(*a, **k):
+        raise RuntimeError("db broke")
+    monkeypatch.setattr(jobs, "start", boom)
+    sent = []
+    monkeypatch.setattr(jobs.ha, "notify", lambda *a, **k: sent.append(1), raising=False)
+    try:
+        jobs.start_scheduled("build", "Building", lambda: None)
+    except RuntimeError:
+        pass
+    assert started == [] and sent == []
+
+
 def test_finished_futures_are_pruned():
     first = jobs.start("history", "a", lambda: None)
     jobs.wait_for(first)
@@ -1090,3 +1128,14 @@ def test_missing_tokens_warn(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="grocer"):
         appmod.warn_missing_tokens()
     assert "MEALIE_TOKEN is empty" in caplog.text and "HA_TOKEN is empty" in caplog.text
+
+
+def test_deploy_script_writes_tokens_literally(tmp_path):
+    import os, re, subprocess, sys
+    src = open(os.path.join(os.path.dirname(__file__), "..", "deploy.sh")).read()
+    code = re.search(r"python3 - <<'PY'\n(.*?)\nPY\n", src, re.S).group(1)
+    (tmp_path / ".env").write_text("MEALIE_TOKEN=\nHA_TOKEN=\nOTHER=keep|me\n")
+    mt, ht = "a|b&c\\d", "x&y|z\\1"
+    subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path, check=True,
+                   env={**os.environ, "MT": mt, "HT": ht})
+    assert (tmp_path / ".env").read_text() == f"MEALIE_TOKEN={mt}\nHA_TOKEN={ht}\nOTHER=keep|me\n"

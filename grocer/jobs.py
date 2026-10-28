@@ -345,11 +345,15 @@ def busy() -> bool:
         return STATE["job"] is not None
 
 
+class Busy(RuntimeError):
+    """Another task already has the browser."""
+
+
 def start(kind: str, label: str, fn, *args, **kwargs) -> dict:
     """Run a long task on the browser thread and report progress. One at a time."""
     with _plock:
         if STATE["job"]:
-            raise RuntimeError('Another task is running. This action was not queued. Try again when it finishes.')
+            raise Busy('Another task is running. This action was not queued. Try again when it finishes.')
         job = {"id": uuid.uuid4().hex[:8], "kind": kind, "label": label, "step": "Starting",
                "done": 0, "total": 0, "waiting": False, "started": time.time()}
         STATE["job"] = job
@@ -390,7 +394,7 @@ def start_scheduled(kind: str, label: str, fn, *, attempt: int = 0) -> None:
     try:
         start(kind, label, fn)
         return
-    except RuntimeError:
+    except Busy:
         log.warning("scheduled %s: another task is running (try %d of %d)", kind, attempt + 1, SCHEDULE_RETRIES + 1)
     if attempt < SCHEDULE_RETRIES:
         t = threading.Timer(SCHEDULE_RETRY_SECONDS, start_scheduled, (kind, label, fn), {"attempt": attempt + 1})
