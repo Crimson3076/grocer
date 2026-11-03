@@ -31,6 +31,8 @@ jobs:
                secrets in logs or responses. Dependency bumps themselves are handled by Dependabot; report only what it can't fix.
                When reporting an exposed secret, cite only the file and line; never quote or paste the value, even partially.
                If an audit tool is missing or the network is blocked, skip it and say so in your summary; don't install packages.
+               For these findings, an audit-tool output line or a concrete request/response trace counts as reproduction;
+               a failing test isn't required.
             2c. Database efficiency (only if the project uses a database): look for N+1 queries, queries inside loops,
                missing indexes on columns used for lookups/joins, unbounded table scans or result sets, and missing
                transactions around multi-step writes. Report one only with evidence (the query and why it's slow or unsafe).
@@ -40,6 +42,9 @@ jobs:
             4. For at most 3 confirmed, reproducible problems, create one issue each with
                `gh issue create --label bug --label bot-found`, containing: title, exact reproduction steps or a failing
                command/test, expected vs actual, the file/line involved and why it's a bug.
+               Never put a secret value in an issue or the job log, even partially (titles, bodies, reproduction steps and
+               commands included); cite the file and line only.
+               For security findings, give only the file, line and kind of problem: no payloads, exploit steps or proof-of-concept code.
             5. If you find nothing solid, create no issues. Finish with a short summary in the job log.
           claude_args: |
             --max-turns 40
